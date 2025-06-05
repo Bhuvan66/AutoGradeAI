@@ -8,6 +8,7 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import re
+import math
 
 nltk.download('punkt')
 nltk.download('stopwords')
@@ -43,7 +44,6 @@ def calculate_similarity(student_answer, reference_answer):
     similarity = cosine_similarity(embedding1, embedding2)[0][0]
     return similarity
 
-# 🔽🔽🔽 NEW: Parse keyword input by priority
 def parse_priority_keywords(raw_input):
     priority_keywords = {'high': [], 'medium': [], 'low': []}
     lines = raw_input.lower().split('\n')
@@ -56,16 +56,13 @@ def parse_priority_keywords(raw_input):
                 priority_keywords[level].extend(keywords)
     return priority_keywords
 
-# 🔄 MODIFIED: Priority-based keyword similarity
 def calculate_keyword_similarity(student_answer, reference_answers, priority_keywords=None):
     if priority_keywords is None:
         priority_keywords = {'high': [], 'medium': [], 'low': []}
 
-    # Clean student answer
     student_text_clean = re.sub(r'[^\w\s]', '', student_answer.lower())
 
-    # Match and count missing keywords based on priority
-    matched, total = 0, 0
+    matched = 0
     critical_missing = []
     missing_keywords = []
 
@@ -82,7 +79,6 @@ def calculate_keyword_similarity(student_answer, reference_answers, priority_key
                 penalty_score += weights[priority]
                 critical_missing.append(kw)
 
-    # Compute weighted match %
     keyword_similarity = matched / total_possible_weight if total_possible_weight else 0.0
 
     return keyword_similarity, missing_keywords, critical_missing, keyword_similarity * 100
@@ -101,9 +97,14 @@ def generate_feedback(similarity, grade, missing_keywords, critical_missing):
         notes += f" Missing key phrases: {', '.join(critical_missing[:5])}."
     return base_feedback + notes
 
+def bell_curve_scale(value, mean=0.5, std_dev=0.15):
+    exponent = -((value - mean) ** 2) / (2 * (std_dev ** 2))
+    gauss_value = math.exp(exponent)  # ranges 0 to 1
+    return gauss_value * 100
+
 def grade_answer(student_answer, reference_answers, thresholds=None, priority_keywords=None):
     if thresholds is None:
-        thresholds = {'A': 0.85, 'B': 0.75, 'C': 0.65, 'D': 0.55, 'F': 0.0}
+        thresholds = {'A': 0.80, 'B': 0.75, 'C': 0.65, 'D': 0.55, 'F': 0.0}
 
     best_semantic_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
 
@@ -112,6 +113,8 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
     )
 
     combined_similarity = (best_semantic_similarity * 0.7) + (keyword_similarity * 0.3)
+
+    bell_score = bell_curve_scale(combined_similarity)
 
     if combined_similarity >= thresholds['A']:
         grade = 'A'
@@ -128,6 +131,7 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
         'semantic_similarity': best_semantic_similarity,
         'keyword_similarity': keyword_similarity,
         'combined_similarity': combined_similarity,
+        'bell_scaled_score': bell_score,
         'grade': grade,
         'missing_keywords': missing_keywords,
         'critical_missing': critical_missing,
@@ -135,7 +139,6 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
         'feedback': generate_feedback(combined_similarity, grade, missing_keywords, critical_missing)
     }
 
-# ✅ MODIFIED UI to accept priority-based input
 def gradio_answer_grader(question, student_answer, reference_answers, priority_keyword_input):
     ref_answers_list = [ans.strip() for ans in reference_answers.split('||')]
     priority_keywords = parse_priority_keywords(priority_keyword_input)
@@ -145,7 +148,8 @@ def gradio_answer_grader(question, student_answer, reference_answers, priority_k
         f"Semantic Similarity: {result['semantic_similarity']:.4f}\n"
         f"Keyword Match Score (weighted): {result['keyword_similarity']:.4f}\n"
         f"Weighted Keyword Match Percent: {result['critical_match_percent']:.2f}%\n"
-        f"Combined Score: {result['combined_similarity']:.4f}\n"
+        f"Combined Score (raw): {result['combined_similarity']:.4f}\n"
+        f"Combined Score (bell curve scaled 0-100): {result['bell_scaled_score']:.2f}\n"
         f"Grade: {result['grade']}\n"
         f"Feedback: {result['feedback']}"
     )
