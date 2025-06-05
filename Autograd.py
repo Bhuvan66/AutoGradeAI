@@ -6,7 +6,6 @@ import gradio as gr
 from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
 from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
 import re
 import math
 
@@ -67,7 +66,6 @@ def calculate_keyword_similarity(student_answer, reference_answers, priority_key
     missing_keywords = []
 
     weights = {'high': 3, 'medium': 2, 'low': 1}
-    penalty_score = 0
     total_possible_weight = 0
 
     for priority, keywords in priority_keywords.items():
@@ -76,7 +74,6 @@ def calculate_keyword_similarity(student_answer, reference_answers, priority_key
             if kw in student_text_clean:
                 matched += weights[priority]
             else:
-                penalty_score += weights[priority]
                 critical_missing.append(kw)
 
     keyword_similarity = matched / total_possible_weight if total_possible_weight else 0.0
@@ -97,14 +94,31 @@ def generate_feedback(similarity, grade, missing_keywords, critical_missing):
         notes += f" Missing key phrases: {', '.join(critical_missing[:5])}."
     return base_feedback + notes
 
-def bell_curve_scale(value, mean=0.5, std_dev=0.15):
-    exponent = -((value - mean) ** 2) / (2 * (std_dev ** 2))
-    gauss_value = math.exp(exponent)  # ranges 0 to 1
-    return gauss_value * 100
+def bell_curve_scale(value):
+    """
+    Custom bell-curve-like scoring that:
+    - Gives a wide plateau (score ~100) for values >= 0.75 (A range)
+    - Sharply falls off for lower ranges, narrowing B, C, D bands
+    """
+    if value >= 0.75:
+        return 100.0
+    elif value >= 0.65:
+        # B range: from 0.65 to 0.75, linear scale from 70 to 99
+        return 70 + (value - 0.65) / (0.75 - 0.65) * (99 - 70)
+    elif value >= 0.55:
+        # C range: from 0.55 to 0.65, linear scale from 40 to 69
+        return 40 + (value - 0.55) / (0.65 - 0.55) * (69 - 40)
+    elif value >= 0.4:
+        # D range: from 0.4 to 0.55, linear scale from 10 to 39
+        return 10 + (value - 0.4) / (0.55 - 0.4) * (39 - 10)
+    else:
+        # F range: below 0.4, scale 0 to 9
+        return max(0, value / 0.4 * 9)
 
 def grade_answer(student_answer, reference_answers, thresholds=None, priority_keywords=None):
     if thresholds is None:
-        thresholds = {'A': 0.80, 'B': 0.75, 'C': 0.65, 'D': 0.55, 'F': 0.0}
+        # Widen A band to 0.75+, narrow others
+        thresholds = {'A': 0.75, 'B': 0.65, 'C': 0.55, 'D': 0.40, 'F': 0.0}
 
     best_semantic_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
 
@@ -149,7 +163,7 @@ def gradio_answer_grader(question, student_answer, reference_answers, priority_k
         f"Keyword Match Score (weighted): {result['keyword_similarity']:.4f}\n"
         f"Weighted Keyword Match Percent: {result['critical_match_percent']:.2f}%\n"
         f"Combined Score (raw): {result['combined_similarity']:.4f}\n"
-        f"Combined Score (bell curve scaled 0-100): {result['bell_scaled_score']:.2f}\n"
+        f"Combined Score (custom scaled 0-100): {result['bell_scaled_score']:.2f}\n"
         f"Grade: {result['grade']}\n"
         f"Feedback: {result['feedback']}"
     )
