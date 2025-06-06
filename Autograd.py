@@ -8,12 +8,15 @@ import nltk
 from nltk.corpus import stopwords
 import re
 import math
+import pandas as pd
+from sentence_transformers import SentenceTransformer  # Added import
 
 nltk.download('punkt')
 nltk.download('stopwords')
 
 tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
 model = AutoModel.from_pretrained('bert-base-uncased')
+sbert_model = SentenceTransformer('all-MiniLM-L6-v2')  # Added SBERT model
 
 def get_bert_embedding(text):
     inputs = tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=128)
@@ -42,6 +45,12 @@ def calculate_similarity(student_answer, reference_answer):
     embedding2 = get_bert_embedding(reference_answer)
     similarity = cosine_similarity(embedding1, embedding2)[0][0]
     return similarity
+
+def calculate_sbert_similarity(student_answer, reference_answer):
+    emb1 = sbert_model.encode([student_answer])[0]
+    emb2 = sbert_model.encode([reference_answer])[0]
+    sim = cosine_similarity([emb1], [emb2])[0][0]
+    return sim
 
 def parse_priority_keywords(raw_input):
     priority_keywords = {'high': [], 'medium': [], 'low': []}
@@ -110,10 +119,17 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
 
     best_semantic_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
 
+    # Calculate SBERT similarity (not used for grading, just for output)
+    best_sbert_similarity = max(calculate_sbert_similarity(student_answer, ref) for ref in reference_answers)
+
     keyword_similarity, missing_keywords, critical_missing, critical_match_percent = calculate_keyword_similarity(
         student_answer, reference_answers, priority_keywords
     )
 
+    if best_semantic_similarity > 0.95:
+        keyword_similarity = 1.0  # If semantic similarity is low, ignore keyword similarity
+    elif best_sbert_similarity < 0.25:
+        keyword_similarity = 0.0
     combined_similarity = (best_semantic_similarity * 0.7) + (keyword_similarity * 0.3)
 
     # Use new z-normalization approach for bell curve scaling
@@ -133,6 +149,7 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
 
     return {
         'semantic_similarity': best_semantic_similarity,
+        'sbert_similarity': best_sbert_similarity,  # Added SBERT similarity to result
         'keyword_similarity': keyword_similarity,
         'combined_similarity': combined_similarity,
         'bell_scaled_score': bell_score,
@@ -148,8 +165,18 @@ def gradio_answer_grader(question, student_answer, reference_answers, priority_k
     priority_keywords = parse_priority_keywords(priority_keyword_input)
     result = grade_answer(student_answer, ref_answers_list, priority_keywords=priority_keywords)
 
+    return (result['grade']
+    )
+
+
+def gradio_answer_grader(question, student_answer, reference_answers, priority_keyword_input):
+    ref_answers_list = [ans.strip() for ans in reference_answers.split('||')]
+    priority_keywords = parse_priority_keywords(priority_keyword_input)
+    result = grade_answer(student_answer, ref_answers_list, priority_keywords=priority_keywords)
+
     return (
-        f"Semantic Similarity: {result['semantic_similarity']:.4f}\n"
+        f"Semantic Similarity (BERT): {result['semantic_similarity']:.4f}\n"
+        f"Semantic Similarity (SBERT all-MiniLM-L6-v2): {result['sbert_similarity']:.4f}\n"
         f"Keyword Match Score (weighted): {result['keyword_similarity']:.4f}\n"
         f"Weighted Keyword Match Percent: {result['critical_match_percent']:.2f}%\n"
         f"Combined Score (raw): {result['combined_similarity']:.4f}\n"
