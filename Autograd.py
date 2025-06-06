@@ -115,7 +115,7 @@ def normalize_score_z(raw_score, mean=0.6, std=0.15):
 def grade_answer(student_answer, reference_answers, thresholds=None, priority_keywords=None):
     if thresholds is None:
         # Thresholds based on scaled score out of 100
-        thresholds = {'A': 85, 'B': 70, 'C': 55, 'D': 40, 'F': 0}
+           thresholds = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
 
     best_semantic_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
 
@@ -126,12 +126,7 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
         student_answer, reference_answers, priority_keywords
     )
 
-    if best_semantic_similarity > 0.95:
-        keyword_similarity = 1.0  # If semantic similarity is low, ignore keyword similarity
-    elif best_semantic_similarity < 0.5:
-        keyword_similarity *= 0.5
-    elif best_sbert_similarity < 0.25:
-        keyword_similarity = 0.0
+   
     combined_similarity = (best_semantic_similarity * 0.25)+(best_sbert_similarity * 0.55) + (keyword_similarity * 0.2)
 
     # Use new z-normalization approach for bell curve scaling
