@@ -128,6 +128,8 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
 
     if best_semantic_similarity > 0.95:
         keyword_similarity = 1.0  # If semantic similarity is low, ignore keyword similarity
+    elif best_semantic_similarity < 0.5:
+        keyword_similarity *= 0.5
     elif best_sbert_similarity < 0.25:
         keyword_similarity = 0.0
     combined_similarity = (best_semantic_similarity * 0.7) + (keyword_similarity * 0.3)
