@@ -132,7 +132,7 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
         keyword_similarity *= 0.5
     elif best_sbert_similarity < 0.25:
         keyword_similarity = 0.0
-    combined_similarity = (best_semantic_similarity * 0.7) + (keyword_similarity * 0.3)
+    combined_similarity = (best_semantic_similarity * 0.25)+(best_sbert_similarity * 0.5) + (keyword_similarity * 0.25)
 
     # Use new z-normalization approach for bell curve scaling
     bell_score = normalize_score_z(combined_similarity)
