@@ -94,31 +94,19 @@ def generate_feedback(similarity, grade, missing_keywords, critical_missing):
         notes += f" Missing key phrases: {', '.join(critical_missing[:5])}."
     return base_feedback + notes
 
-def bell_curve_scale(value):
+def normalize_score_z(raw_score, mean=0.6, std=0.15):
     """
-    Custom bell-curve-like scoring that:
-    - Gives a wide plateau (score ~100) for values >= 0.75 (A range)
-    - Sharply falls off for lower ranges, narrowing B, C, D bands
+    Normalize using Z-score, assuming raw_score is between 0 and 1.
+    Then scale using a sigmoid-like logistic curve to map to 0–100.
     """
-    if value >= 0.75:
-        return 100.0
-    elif value >= 0.65:
-        # B range: from 0.65 to 0.75, linear scale from 70 to 99
-        return 70 + (value - 0.65) / (0.75 - 0.65) * (99 - 70)
-    elif value >= 0.55:
-        # C range: from 0.55 to 0.65, linear scale from 40 to 69
-        return 40 + (value - 0.55) / (0.65 - 0.55) * (69 - 40)
-    elif value >= 0.4:
-        # D range: from 0.4 to 0.55, linear scale from 10 to 39
-        return 10 + (value - 0.4) / (0.55 - 0.4) * (39 - 10)
-    else:
-        # F range: below 0.4, scale 0 to 9
-        return max(0, value / 0.4 * 9)
+    z = (raw_score - mean) / std
+    logistic_scaled = 100 / (1 + math.exp(-z))  # S-shaped curve
+    return logistic_scaled
 
 def grade_answer(student_answer, reference_answers, thresholds=None, priority_keywords=None):
     if thresholds is None:
-        # Widen A band to 0.75+, narrow others
-        thresholds = {'A': 0.75, 'B': 0.65, 'C': 0.55, 'D': 0.40, 'F': 0.0}
+        # Thresholds based on scaled score out of 100
+        thresholds = {'A': 85, 'B': 70, 'C': 55, 'D': 40, 'F': 0}
 
     best_semantic_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
 
@@ -128,15 +116,17 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
 
     combined_similarity = (best_semantic_similarity * 0.7) + (keyword_similarity * 0.3)
 
-    bell_score = bell_curve_scale(combined_similarity)
+    # Use new z-normalization approach for bell curve scaling
+    bell_score = normalize_score_z(combined_similarity)
 
-    if combined_similarity >= thresholds['A']:
+    # Assign grade based on scaled bell_score
+    if bell_score >= thresholds['A']:
         grade = 'A'
-    elif combined_similarity >= thresholds['B']:
+    elif bell_score >= thresholds['B']:
         grade = 'B'
-    elif combined_similarity >= thresholds['C']:
+    elif bell_score >= thresholds['C']:
         grade = 'C'
-    elif combined_similarity >= thresholds['D']:
+    elif bell_score >= thresholds['D']:
         grade = 'D'
     else:
         grade = 'F'
