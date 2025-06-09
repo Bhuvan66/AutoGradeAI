@@ -162,15 +162,6 @@ def gradio_answer_grader(question, student_answer, reference_answers, priority_k
     priority_keywords = parse_priority_keywords(priority_keyword_input)
     result = grade_answer(student_answer, ref_answers_list, priority_keywords=priority_keywords)
 
-    return (result['grade']
-    )
-
-
-def gradio_answer_grader(question, student_answer, reference_answers, priority_keyword_input):
-    ref_answers_list = [ans.strip() for ans in reference_answers.split('||')]
-    priority_keywords = parse_priority_keywords(priority_keyword_input)
-    result = grade_answer(student_answer, ref_answers_list, priority_keywords=priority_keywords)
-
     return (
         f"Semantic Similarity (BERT): {result['semantic_similarity']:.4f}\n"
         f"Semantic Similarity (SBERT all-MiniLM-L6-v2): {result['sbert_similarity']:.4f}\n"
