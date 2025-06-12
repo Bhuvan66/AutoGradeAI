@@ -100,10 +100,10 @@ def process_both_images(student_img, reference_img, diagram_type):
     reference_answer = analyze_single_image(reference_img, diagram_type)
 
     # Save both answers to disk for further use
-    with open("outputs/student_answer.txt", "w", encoding="utf-8") as f:
-        f.write(student_answer)
-    with open("outputs/reference_answer.txt", "w", encoding="utf-8") as f:
-        f.write(reference_answer)
+    # with open("outputs/student_answer.txt", "w", encoding="utf-8") as f:
+    #     f.write(student_answer)
+    # with open("outputs/reference_answer.txt", "w", encoding="utf-8") as f:
+    #     f.write(reference_answer)
 
     # Combine and return as display
     combined = f"🧑‍🎓 **Student Answer:**\n{student_answer}\n\n📘 **Reference Answer:**\n{reference_answer}"
