@@ -185,13 +185,22 @@ def extract_keywords_priority(text):
 
     return high, medium, low
 
+# Store the last auto-generated keywords for merging with manual keywords
+last_auto_keywords = {"high": [], "medium": [], "low": []}
+
 def generate_auto_keywords(reference_answer):
     """Generate keywords automatically from reference answer only"""
+    global last_auto_keywords
     if not reference_answer:
+        last_auto_keywords = {"high": [], "medium": [], "low": []}
         return "Please analyze images first to generate keywords."
     
     ref_high, ref_med, ref_low = extract_keywords_priority(reference_answer)
-    
+    last_auto_keywords = {
+        "high": ref_high,
+        "medium": ref_med,
+        "low": ref_low
+    }
     result = (
         f"**Reference Keywords:**\n"
         f"High Priority: {', '.join(ref_high)}\n"
@@ -201,27 +210,71 @@ def generate_auto_keywords(reference_answer):
     return result
 
 def process_manual_keywords(manual_keywords_text):
-    """Process manually entered keywords"""
+    """
+    Process manually entered keywords and merge with auto-generated keywords.
+    Display all in three sections: High, Medium, Low.
+    """
+    global last_auto_keywords
     if not manual_keywords_text.strip():
-        return "No manual keywords entered."
+        # Show current auto keywords if no manual input
+        return (
+            f"High Priority: {', '.join(last_auto_keywords['high'])}\n"
+            f"Medium Priority: {', '.join(last_auto_keywords['medium'])}\n"
+            f"Low Priority: {', '.join(last_auto_keywords['low'])}"
+        )
     
     # Split by comma and clean each keyword
     manual_keywords = [kw.strip() for kw in manual_keywords_text.split(',')]
     cleaned_keywords = []
-    
     for keyword in manual_keywords:
         clean_kw = clean_keyword(keyword)
         if clean_kw:
             cleaned_keywords.append(clean_kw)
-    
     if not cleaned_keywords:
         return "No valid keywords found after filtering."
-    
-    result = f"**Manual Keywords:** {', '.join(cleaned_keywords)}"
+
+    # Merge manual keywords into auto keywords, distributing evenly
+    # Try to add new manual keywords to high, then medium, then low, in round-robin fashion
+    merged = {
+        "high": list(last_auto_keywords["high"]),
+        "medium": list(last_auto_keywords["medium"]),
+        "low": list(last_auto_keywords["low"])
+    }
+    # Flatten all auto keywords for duplicate checking
+    all_auto = set(merged["high"] + merged["medium"] + merged["low"])
+    # Distribute manual keywords
+    sections = ["high", "medium", "low"]
+    idx = 0
+    for kw in cleaned_keywords:
+        if kw not in all_auto:
+            merged[sections[idx % 3]].append(kw)
+            idx += 1
+
+    result = (
+        f"High Priority: {', '.join(merged['high'])}\n"
+        f"Medium Priority: {', '.join(merged['medium'])}\n"
+        f"Low Priority: {', '.join(merged['low'])}"
+    )
+    # Update last_auto_keywords so further manual adds are cumulative
+    last_auto_keywords = merged
     return result
+
+# Define the main_process function
+def main_process(student_img, reference_img, diagram_type):
+    s_ans, r_ans, _ = process_both_images(student_img, reference_img, diagram_type)
+    return s_ans, r_ans
 
 # Gradio UI
 with gr.Blocks(title="Diagram Analysis Tool") as demo:
+    # Inline CSS for Gradio UI
+    gr.HTML("""
+    <style>
+    /* Example custom styles, adjust as needed */
+    .gr-button { font-weight: bold; }
+    .gr-textbox textarea { font-size: 1.05em; }
+    .gr-markdown h1, .gr-markdown h2 { color: #2d3748; }
+    </style>
+    """)
     gr.Markdown("# Compare Student and Reference Diagrams")
     gr.Markdown("Upload both student and reference diagram images. Select the diagram type for accurate analysis and comparison.")
 
@@ -242,45 +295,85 @@ with gr.Blocks(title="Diagram Analysis Tool") as demo:
     # Keywords section
     gr.Markdown("## Keywords Extraction")
     
-    with gr.Row():
-        auto_keywords_btn = gr.Button("Generate Keywords Automatically", variant="secondary")
-        manual_keywords_btn = gr.Button("Add Keywords Manually", variant="secondary")
-    
     analyze_btn = gr.Button("Analyze Images", variant="primary")
-    
+
     with gr.Row():
         student_answer = gr.Textbox(label="Student Answer", interactive=False, lines=5)
         reference_answer = gr.Textbox(label="Reference Answer", interactive=False, lines=5)
-    
-    combined_output = gr.Textbox(label="Combined Output", interactive=False, lines=8)
-    
-    # Manual keywords input (initially hidden)
-    manual_keywords_input = gr.Textbox(
-        label="Enter Keywords Manually (separated by commas)",
-        placeholder="e.g., process, data, flow, system, input",
-        visible=False
-    )
-    
+
+    auto_keywords_btn = gr.Button("Generate Keywords Automatically", variant="secondary")
+
+    with gr.Row():
+        manual_keywords_btn = gr.Button("Add Keywords Manually", variant="secondary")
+
+    # --- Manual keyword input: 3 boxes for high, medium, low ---
+    with gr.Row(visible=False) as manual_input_row:
+        manual_high_input = gr.Textbox(
+            label="High Priority Keywords (comma separated)",
+            placeholder="e.g., process, input, output"
+        )
+        manual_medium_input = gr.Textbox(
+            label="Medium Priority Keywords (comma separated)",
+            placeholder="e.g., data, flow"
+        )
+        manual_low_input = gr.Textbox(
+            label="Low Priority Keywords (comma separated)",
+            placeholder="e.g., system, label"
+        )
     submit_manual_btn = gr.Button("Submit Manual Keywords", visible=False, variant="secondary")
-    
     keywords_output = gr.Textbox(label="Keywords Output", interactive=False, lines=6)
 
-    # Event handlers
-    def main_process(student_img, reference_img, diagram_type):
-        s_ans, r_ans, combined = process_both_images(student_img, reference_img, diagram_type)
-        return s_ans, r_ans, combined
-
+    # --- Event handlers ---
     def show_manual_input():
-        return gr.update(visible=True), gr.update(visible=True)
-    
+        return (
+            gr.update(visible=True),  # manual_input_row
+            gr.update(visible=True)   # submit_manual_btn
+        )
+
     def hide_manual_input():
-        return gr.update(visible=False), gr.update(visible=False)
+        return (
+            gr.update(visible=False),  # manual_input_row
+            gr.update(visible=False)   # submit_manual_btn
+        )
+
+    def process_manual_keywords_v2(high_text, medium_text, low_text):
+        global last_auto_keywords
+        # Parse and clean each section
+        def parse_section(text):
+            return [clean_keyword(kw) for kw in text.split(",") if clean_keyword(kw)]
+        manual_high = parse_section(high_text)
+        manual_medium = parse_section(medium_text)
+        manual_low = parse_section(low_text)
+
+        # Merge with auto keywords, only add if not present in that section
+        merged = {
+            "high": list(last_auto_keywords["high"]),
+            "medium": list(last_auto_keywords["medium"]),
+            "low": list(last_auto_keywords["low"])
+        }
+        for kw in manual_high:
+            if kw and kw not in merged["high"]:
+                merged["high"].append(kw)
+        for kw in manual_medium:
+            if kw and kw not in merged["medium"]:
+                merged["medium"].append(kw)
+        for kw in manual_low:
+            if kw and kw not in merged["low"]:
+                merged["low"].append(kw)
+
+        result = (
+            f"High Priority: {', '.join(merged['high'])}\n"
+            f"Medium Priority: {', '.join(merged['medium'])}\n"
+            f"Low Priority: {', '.join(merged['low'])}"
+        )
+        last_auto_keywords.update(merged)
+        return result
 
     # Connect events
     analyze_btn.click(
         main_process,
         inputs=[student_img, reference_img, diagram_type],
-        outputs=[student_answer, reference_answer, combined_output]
+        outputs=[student_answer, reference_answer]
     )
 
     auto_keywords_btn.click(
@@ -289,17 +382,17 @@ with gr.Blocks(title="Diagram Analysis Tool") as demo:
         outputs=keywords_output
     ).then(
         hide_manual_input,
-        outputs=[manual_keywords_input, submit_manual_btn]
+        outputs=[manual_input_row, submit_manual_btn]
     )
 
     manual_keywords_btn.click(
         show_manual_input,
-        outputs=[manual_keywords_input, submit_manual_btn]
+        outputs=[manual_input_row, submit_manual_btn]
     )
 
     submit_manual_btn.click(
-        process_manual_keywords,
-        inputs=[manual_keywords_input],
+        process_manual_keywords_v2,
+        inputs=[manual_high_input, manual_medium_input, manual_low_input],
         outputs=keywords_output
     )
 
