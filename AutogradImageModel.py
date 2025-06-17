@@ -1,6 +1,12 @@
 import gradio as gr
 from ollama import chat
 import os
+from collections import Counter
+import json
+import nltk
+from nltk.corpus import stopwords
+import string
+import re
 
 # Output folder
 os.makedirs("outputs", exist_ok=True)
@@ -37,7 +43,7 @@ def analyze_single_image(image, diagram_type):
             f"Carefully examine the graph or chart in this image and provide a detailed single-paragraph description. "
             f"Identify and transcribe all axis labels, titles, legends, and data values. For each bar/line/segment, specify "
             f"its value and its associated category. Describe any trends, relationships, or comparisons depicted, and explain "
-            f"the chart’s organization to enable accurate reproduction and evaluation."
+            f"the chart's organization to enable accurate reproduction and evaluation."
         )
     elif diagram_type == "Table":
         adjusted_prompt = (
@@ -64,7 +70,7 @@ def analyze_single_image(image, diagram_type):
         adjusted_prompt = (
             f"Interpret the UML diagram in the image and describe in a single paragraph all classes, objects, methods, "
             f"attributes, and relationships. Include visibility indicators (+/-/#), inheritance, associations, and multiplicities. "
-            f"Accurately represent each component’s position, label, and connections to maintain the diagram’s semantic structure."
+            f"Accurately represent each component's position, label, and connections to maintain the diagram's semantic structure."
         )
     elif diagram_type == "Circuit Diagram":
         adjusted_prompt = (
@@ -98,37 +104,204 @@ def analyze_single_image(image, diagram_type):
 def process_both_images(student_img, reference_img, diagram_type):
     student_answer = analyze_single_image(student_img, diagram_type)
     reference_answer = analyze_single_image(reference_img, diagram_type)
-
-    # Save both answers to disk for further use
-    # with open("outputs/student_answer.txt", "w", encoding="utf-8") as f:
-    #     f.write(student_answer)
-    # with open("outputs/reference_answer.txt", "w", encoding="utf-8") as f:
-    #     f.write(reference_answer)
-
-    # Combine and return as display
     combined = f"🧑‍🎓 **Student Answer:**\n{student_answer}\n\n📘 **Reference Answer:**\n{reference_answer}"
-    return combined
+    return student_answer, reference_answer, combined
+
+# Import actual models
+from keybert import KeyBERT
+import yake
+
+# Download stopwords if not already present
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords')
+
+# Load common words from JSON and combine with stopwords
+with open(os.path.join(os.path.dirname(__file__), "common_words.json"), "r", encoding="utf-8") as f:
+    COMMON_WORDS = set(json.load(f))
+COMMON_WORDS = COMMON_WORDS.union(set(stopwords.words('english')))
+
+kw_model = KeyBERT()
+yake_extractor = yake.KeywordExtractor()
+
+# Reduce nr_candidates and top_n for faster extraction
+KEYBERT_TOP_N = 8
+YAKE_TOP_N = 8
+
+def clean_keyword(keyword):
+    """Clean and validate a single keyword"""
+    # Remove punctuation and convert to lowercase
+    keyword = re.sub(r'[^\w\s]', '', keyword.lower().strip())
+    
+    # Skip if empty, too short, or common word
+    if len(keyword) < 3 or keyword in COMMON_WORDS:
+        return None
+    
+    # Skip if it's all digits
+    if keyword.isdigit():
+        return None
+        
+    return keyword
+
+def extract_keywords_priority(text):
+    """
+    Extracts keywords and categorizes them into high, medium, and low priority
+    based on KeyBERT scores (descending).
+    """
+    # KeyBERT - extract single words only, fewer candidates for speed
+    keybert_keywords = kw_model.extract_keywords(
+        text,
+        keyphrase_ngram_range=(1, 1),
+        stop_words='english',
+        use_maxsum=True,
+        nr_candidates=12,
+        top_n=KEYBERT_TOP_N
+    )
+    # keybert_keywords: list of (keyword, score)
+    # Clean and filter keywords, deduplicate early
+    cleaned_keywords = []
+    seen = set()
+    for keyword, score in keybert_keywords:
+        cleaned = clean_keyword(keyword)
+        if cleaned and cleaned not in seen:
+            cleaned_keywords.append((cleaned, score))
+            seen.add(cleaned)
+
+    # Sort by score descending
+    sorted_keywords = sorted(cleaned_keywords, key=lambda x: -x[1])
+    total = len(sorted_keywords)
+    if total == 0:
+        return [], [], []
+
+    # Assign high, medium, low by percentage
+    high_n = max(1, int(total * 0.3))
+    med_n = max(1, int(total * 0.4))
+    low_n = total - high_n - med_n
+
+    high = [k for k, _ in sorted_keywords[:high_n]]
+    medium = [k for k, _ in sorted_keywords[high_n:high_n+med_n]]
+    low = [k for k, _ in sorted_keywords[high_n+med_n:]]
+
+    return high, medium, low
+
+def generate_auto_keywords(reference_answer):
+    """Generate keywords automatically from reference answer only"""
+    if not reference_answer:
+        return "Please analyze images first to generate keywords."
+    
+    ref_high, ref_med, ref_low = extract_keywords_priority(reference_answer)
+    
+    result = (
+        f"**Reference Keywords:**\n"
+        f"High Priority: {', '.join(ref_high)}\n"
+        f"Medium Priority: {', '.join(ref_med)}\n"
+        f"Low Priority: {', '.join(ref_low)}"
+    )
+    return result
+
+def process_manual_keywords(manual_keywords_text):
+    """Process manually entered keywords"""
+    if not manual_keywords_text.strip():
+        return "No manual keywords entered."
+    
+    # Split by comma and clean each keyword
+    manual_keywords = [kw.strip() for kw in manual_keywords_text.split(',')]
+    cleaned_keywords = []
+    
+    for keyword in manual_keywords:
+        clean_kw = clean_keyword(keyword)
+        if clean_kw:
+            cleaned_keywords.append(clean_kw)
+    
+    if not cleaned_keywords:
+        return "No valid keywords found after filtering."
+    
+    result = f"**Manual Keywords:** {', '.join(cleaned_keywords)}"
+    return result
 
 # Gradio UI
-demo = gr.Interface(
-    fn=process_both_images,
-    inputs=[
-        gr.Image(type="filepath", label="Upload Student Image"),
-        gr.Image(type="filepath", label="Upload Reference Image"),
-        gr.Radio(
-            choices=[
-                "Flowchart", "Block Diagram", "Graph/Chart", "Table",
-                "ER Diagram", "Network Diagram", "UML Diagram",
-                "Circuit Diagram", "Scientific/Biological Diagram", "Mind Map/Concept Map"
-            ],
-            value="Flowchart",
-            label="Select Diagram Type"
-        )
-    ],
-    outputs=gr.Textbox(label="Generated Output"),
-    title="Compare Student and Reference Diagrams",
-    description="Upload both student and reference diagram images. Select the diagram type for accurate analysis and comparison."
-)
+with gr.Blocks(title="Diagram Analysis Tool") as demo:
+    gr.Markdown("# Compare Student and Reference Diagrams")
+    gr.Markdown("Upload both student and reference diagram images. Select the diagram type for accurate analysis and comparison.")
+
+    with gr.Row():
+        student_img = gr.Image(type="filepath", label="Upload Student Image")
+        reference_img = gr.Image(type="filepath", label="Upload Reference Image")
+    
+    diagram_type = gr.Radio(
+        choices=[
+            "Flowchart", "Block Diagram", "Graph/Chart", "Table",
+            "ER Diagram", "Network Diagram", "UML Diagram",
+            "Circuit Diagram", "Scientific/Biological Diagram", "Mind Map/Concept Map"
+        ],
+        value="Flowchart",
+        label="Select Diagram Type"
+    )
+    
+    # Keywords section
+    gr.Markdown("## Keywords Extraction")
+    
+    with gr.Row():
+        auto_keywords_btn = gr.Button("Generate Keywords Automatically", variant="secondary")
+        manual_keywords_btn = gr.Button("Add Keywords Manually", variant="secondary")
+    
+    analyze_btn = gr.Button("Analyze Images", variant="primary")
+    
+    with gr.Row():
+        student_answer = gr.Textbox(label="Student Answer", interactive=False, lines=5)
+        reference_answer = gr.Textbox(label="Reference Answer", interactive=False, lines=5)
+    
+    combined_output = gr.Textbox(label="Combined Output", interactive=False, lines=8)
+    
+    # Manual keywords input (initially hidden)
+    manual_keywords_input = gr.Textbox(
+        label="Enter Keywords Manually (separated by commas)",
+        placeholder="e.g., process, data, flow, system, input",
+        visible=False
+    )
+    
+    submit_manual_btn = gr.Button("Submit Manual Keywords", visible=False, variant="secondary")
+    
+    keywords_output = gr.Textbox(label="Keywords Output", interactive=False, lines=6)
+
+    # Event handlers
+    def main_process(student_img, reference_img, diagram_type):
+        s_ans, r_ans, combined = process_both_images(student_img, reference_img, diagram_type)
+        return s_ans, r_ans, combined
+
+    def show_manual_input():
+        return gr.update(visible=True), gr.update(visible=True)
+    
+    def hide_manual_input():
+        return gr.update(visible=False), gr.update(visible=False)
+
+    # Connect events
+    analyze_btn.click(
+        main_process,
+        inputs=[student_img, reference_img, diagram_type],
+        outputs=[student_answer, reference_answer, combined_output]
+    )
+
+    auto_keywords_btn.click(
+        generate_auto_keywords,
+        inputs=[reference_answer],
+        outputs=keywords_output
+    ).then(
+        hide_manual_input,
+        outputs=[manual_keywords_input, submit_manual_btn]
+    )
+
+    manual_keywords_btn.click(
+        show_manual_input,
+        outputs=[manual_keywords_input, submit_manual_btn]
+    )
+
+    submit_manual_btn.click(
+        process_manual_keywords,
+        inputs=[manual_keywords_input],
+        outputs=keywords_output
+    )
 
 if __name__ == "__main__":
     demo.launch()
