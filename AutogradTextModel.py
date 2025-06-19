@@ -362,13 +362,32 @@ if __name__ == "__main__":
         
         # --- Integrated Keyword Extraction and Manual Edit ---
         def autofill_priority_keywords(ref_answers):
-            ref_text = ref_answers.split('||')[0] if ref_answers else ""
-            high, medium, low = extract_keywords_priority(ref_text)
-            return (
-                f"high: {', '.join(high)}\n"
-                f"medium: {', '.join(medium)}\n"
-                f"low: {', '.join(low)}"
+            # Split reference answers by '||'
+            ref_texts = [txt.strip() for txt in ref_answers.split('||') if txt.strip()]
+            all_high, all_medium, all_low = set(), set(), set()
+            per_ref_outputs = []
+            for idx, ref_text in enumerate(ref_texts, 1):
+                high, medium, low = extract_keywords_priority(ref_text)
+                all_high.update(high)
+                all_medium.update(medium)
+                all_low.update(low)
+                per_ref_outputs.append(
+                    f"Reference {idx}:\n"
+                    f"  high: {', '.join(high)}\n"
+                    f"  medium: {', '.join(medium)}\n"
+                    f"  low: {', '.join(low)}"
+                )
+            # Limit combined keywords: high=3, medium=5, low=all
+            combined_high = sorted(all_high)[:3]
+            combined_medium = sorted(all_medium)[:5]
+            combined_low = sorted(all_low)
+            combined = (
+                f"Combined Keywords:\n"
+                f"high: {', '.join(combined_high)}\n"
+                f"medium: {', '.join(combined_medium)}\n"
+                f"low: {', '.join(combined_low)}"
             )
+            return "\n\n".join(per_ref_outputs + [combined])
 
         with gr.Row():
             priority_keywords_input = gr.Textbox(
