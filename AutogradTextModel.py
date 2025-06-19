@@ -223,10 +223,14 @@ def normalize_score_z(raw_score, mean=0.6, std=0.15):
     logistic_scaled = 100 / (1 + math.exp(-z))  # S-shaped curve
     return logistic_scaled
 
-def grade_answer(student_answer, reference_answers, thresholds=None, priority_keywords=None):
+def grade_answer(student_answer, reference_answers, thresholds=None, priority_keywords=None, weights=None):
+    # Default thresholds for text grading if not provided
     if thresholds is None:
-        # Thresholds based on scaled score out of 100
-           thresholds = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
+        thresholds = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
+    
+    # Default weights for text grading if not provided
+    if weights is None:
+        weights = [0.25, 0.55, 0.2]  # [bert_weight, sbert_weight, keyword_weight]
 
     best_semantic_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
 
@@ -237,8 +241,8 @@ def grade_answer(student_answer, reference_answers, thresholds=None, priority_ke
         student_answer, reference_answers, priority_keywords
     )
 
-   
-    combined_similarity = (best_semantic_similarity * 0.25)+(best_sbert_similarity * 0.55) + (keyword_similarity * 0.2)
+    # Use configurable weights
+    combined_similarity = (best_semantic_similarity * weights[0]) + (best_sbert_similarity * weights[1]) + (keyword_similarity * weights[2])
 
     # Use new z-normalization approach for bell curve scaling
     bell_score = normalize_score_z(combined_similarity)
@@ -287,7 +291,6 @@ def gradio_answer_grader(student_answer, reference_answers, priority_keyword_inp
 iface = gr.Interface(
     fn=gradio_answer_grader,
     inputs=[
-        gr.Textbox(label="Question"),
         gr.Textbox(label="Student Answer"),
         gr.Textbox(label="Reference Answers (separate with ||)"),
         gr.Textbox(label="Priority Keywords (e.g., high: keyword1, keyword2...)")

@@ -12,6 +12,14 @@ from AutogradTextModel import (
 # --- Import diagram analysis logic ---
 from AutogradImageModel import analyze_single_image
 
+# Weight configurations for different grading types
+TEXT_GRADING_WEIGHTS = [0.25, 0.55, 0.2]  # [bert_weight, sbert_weight, keyword_weight]
+DIAGRAM_GRADING_WEIGHTS = [0.70, 0.30, 0.0]  # [bert_weight, sbert_weight, keyword_weight] - higher keyword weight for diagrams
+
+# Threshold configurations for different grading types
+TEXT_GRADING_THRESHOLDS = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
+DIAGRAM_GRADING_THRESHOLDS = {'A': 85, 'B': 75, 'C': 60, 'D': 30, 'F': 0}  # Slightly lower thresholds for diagrams
+
 # --- Helper: Keyword extraction for reference text/diagram ---
 def extract_priority_keywords_from_text(ref_text):
     high, medium, low = extract_keywords_priority(ref_text)
@@ -24,8 +32,15 @@ def extract_priority_keywords_from_text(ref_text):
 def extract_priority_keywords_from_diagram(diagram_img, diagram_type):
     if diagram_img is None:
         return ""
-    diagram_analysis = analyze_single_image(diagram_img, diagram_type)
-    return extract_priority_keywords_from_text(diagram_analysis)
+    # Run diagram analysis 5 times for keyword extraction
+    analyses = []
+    for i in range(5):
+        analysis = analyze_single_image(diagram_img, diagram_type)
+        analyses.append(analysis)
+    
+    # Combine all analyses for keyword extraction
+    combined_analysis = ' || '.join(analyses)
+    return extract_priority_keywords_from_text(combined_analysis)
 
 # --- Main combined grading logic ---
 def combined_grader(
@@ -36,10 +51,10 @@ def combined_grader(
     # --- Text grading ---
     text_grade_result = ""
     if student_text.strip() and reference_text.strip():
-        # Use text grading logic
-        ref_answers_list = [reference_text.strip()]
+        # Split reference text by || to handle multiple versions
+        ref_answers_list = [ans.strip() for ans in reference_text.split('||') if ans.strip()]
         priority_keywords = parse_priority_keywords(priority_keywords_text)
-        grade = grade_answer(student_text, ref_answers_list, priority_keywords=priority_keywords)
+        grade = grade_answer(student_text, ref_answers_list, thresholds=TEXT_GRADING_THRESHOLDS, priority_keywords=priority_keywords, weights=TEXT_GRADING_WEIGHTS)
         text_grade_result = (
             f"**Text Answer Grading**\n"
             f"Semantic Similarity (BERT): {grade['semantic_similarity']:.4f}\n"
@@ -61,13 +76,18 @@ def combined_grader(
     # --- Diagram grading ---
     diagram_grade_result = ""
     if student_diagram is not None and reference_diagram is not None:
-        # Analyze both diagrams
+        # Analyze student diagram once
         student_analysis = analyze_single_image(student_diagram, diagram_type)
-        reference_analysis = analyze_single_image(reference_diagram, diagram_type)
-        # Use text grading logic on the analyses
-        ref_answers_list = [reference_analysis]
+        
+        # Analyze reference diagram 5 times to get multiple versions
+        reference_analyses = []
+        for i in range(5):
+            ref_analysis = analyze_single_image(reference_diagram, diagram_type)
+            reference_analyses.append(ref_analysis)
+        
+        # Use all reference analyses for grading with diagram-specific weights and thresholds
         priority_keywords = parse_priority_keywords(priority_keywords_diagram)
-        grade = grade_answer(student_analysis, ref_answers_list, priority_keywords=priority_keywords)
+        grade = grade_answer(student_analysis, reference_analyses, thresholds=DIAGRAM_GRADING_THRESHOLDS, priority_keywords=priority_keywords, weights=DIAGRAM_GRADING_WEIGHTS)
         diagram_grade_result = (
             f"**Diagram Grading**\n"
             f"Semantic Similarity (BERT): {grade['semantic_similarity']:.4f}\n"
