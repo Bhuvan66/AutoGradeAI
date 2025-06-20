@@ -18,7 +18,7 @@ DIAGRAM_GRADING_WEIGHTS = [0.05, 0.95, 0.0]  # Stricter: SBERT dominates, BERT m
 
 # Threshold configurations for different grading types
 TEXT_GRADING_THRESHOLDS = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
-DIAGRAM_GRADING_THRESHOLDS = {'A': 96, 'B': 90, 'C': 82, 'D': 75, 'F': 0}  # Even stricter: much higher cutoffs
+DIAGRAM_GRADING_THRESHOLDS = {'A': 85, 'B': 80, 'C': 77, 'D': 75, 'F': 0}  # Even stricter: much higher cutoffs
 
 # --- Helper: Keyword extraction for reference text/diagram ---
 def extract_priority_keywords_from_text(ref_text):
