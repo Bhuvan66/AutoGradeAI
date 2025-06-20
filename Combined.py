@@ -14,7 +14,7 @@ from AutogradImageModel import analyze_single_image
 
 # Weight configurations for different grading types
 TEXT_GRADING_WEIGHTS = [0.25, 0.55, 0.2]  # [bert_weight, sbert_weight, keyword_weight]
-DIAGRAM_GRADING_WEIGHTS = [0.70, 0.30, 0.0]  # [bert_weight, sbert_weight, keyword_weight] - higher keyword weight for diagrams
+DIAGRAM_GRADING_WEIGHTS = [0.50, 0.50, 0.0]  # [bert_weight, sbert_weight, keyword_weight] - higher keyword weight for diagrams
 
 # Threshold configurations for different grading types
 TEXT_GRADING_THRESHOLDS = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
@@ -29,24 +29,11 @@ def extract_priority_keywords_from_text(ref_text):
         f"low: {', '.join(low)}"
     )
 
-def extract_priority_keywords_from_diagram(diagram_img, diagram_type):
-    if diagram_img is None:
-        return ""
-    # Run diagram analysis 5 times for keyword extraction
-    analyses = []
-    for i in range(5):
-        analysis = analyze_single_image(diagram_img, diagram_type)
-        analyses.append(analysis)
-    
-    # Combine all analyses for keyword extraction
-    combined_analysis = ' || '.join(analyses)
-    return extract_priority_keywords_from_text(combined_analysis)
-
 # --- Main combined grading logic ---
 def combined_grader(
     student_text, student_diagram, diagram_type,
     reference_text, reference_diagram,
-    priority_keywords_text, priority_keywords_diagram
+    priority_keywords_text # removed priority_keywords_diagram
 ):
     # --- Text grading ---
     text_grade_result = ""
@@ -86,8 +73,8 @@ def combined_grader(
             reference_analyses.append(ref_analysis)
         
         # Use all reference analyses for grading with diagram-specific weights and thresholds
-        priority_keywords = parse_priority_keywords(priority_keywords_diagram)
-        grade = grade_answer(student_analysis, reference_analyses, thresholds=DIAGRAM_GRADING_THRESHOLDS, priority_keywords=priority_keywords, weights=DIAGRAM_GRADING_WEIGHTS)
+        # No priority_keywords for diagram
+        grade = grade_answer(student_analysis, reference_analyses, thresholds=DIAGRAM_GRADING_THRESHOLDS, priority_keywords=None, weights=DIAGRAM_GRADING_WEIGHTS)
         diagram_grade_result = (
             f"**Diagram Grading**\n"
             f"Semantic Similarity (BERT): {grade['semantic_similarity']:.4f}\n"
@@ -144,20 +131,7 @@ with gr.Blocks(title="Combined Text & Diagram Grading Tool") as demo:
             inputs=[reference_text],
             outputs=priority_keywords_text
         )
-
-        gr.Markdown("### Extract/Edit Priority Keywords for Diagram")
-        with gr.Row():
-            priority_keywords_diagram = gr.Textbox(
-                label="Priority Keywords for Diagram (edit or extract)",
-                lines=4,
-                placeholder="high: ...\nmedium: ...\nlow: ..."
-            )
-            extract_kw_diagram_btn = gr.Button("Extract from Reference Diagram", variant="secondary")
-        extract_kw_diagram_btn.click(
-            extract_priority_keywords_from_diagram,
-            inputs=[reference_diagram, diagram_type],
-            outputs=priority_keywords_diagram
-        )
+        # --- Remove diagram keyword extraction and manual editing UI ---
 
     gr.Markdown("## Grade")
     grade_btn = gr.Button("Grade Both")
@@ -169,7 +143,7 @@ with gr.Blocks(title="Combined Text & Diagram Grading Tool") as demo:
         inputs=[
             student_text, student_diagram, diagram_type,
             reference_text, reference_diagram,
-            priority_keywords_text, priority_keywords_diagram
+            priority_keywords_text # removed priority_keywords_diagram
         ],
         outputs=[text_grade_result, diagram_grade_result]
     )
