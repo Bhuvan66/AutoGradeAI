@@ -14,11 +14,11 @@ from AutogradImageModel import analyze_single_image
 
 # Weight configurations for different grading types
 TEXT_GRADING_WEIGHTS = [0.25, 0.55, 0.2]  # [bert_weight, sbert_weight, keyword_weight]
-DIAGRAM_GRADING_WEIGHTS = [0.50, 0.50, 0.0]  # [bert_weight, sbert_weight, keyword_weight] - higher keyword weight for diagrams
+DIAGRAM_GRADING_WEIGHTS = [0.05, 0.95, 0.0]  # Stricter: SBERT dominates, BERT minor, no keyword
 
 # Threshold configurations for different grading types
 TEXT_GRADING_THRESHOLDS = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
-DIAGRAM_GRADING_THRESHOLDS = {'A': 85, 'B': 75, 'C': 60, 'D': 30, 'F': 0}  # Slightly lower thresholds for diagrams
+DIAGRAM_GRADING_THRESHOLDS = {'A': 96, 'B': 90, 'C': 82, 'D': 75, 'F': 0}  # Even stricter: much higher cutoffs
 
 # --- Helper: Keyword extraction for reference text/diagram ---
 def extract_priority_keywords_from_text(ref_text):
