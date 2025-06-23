@@ -132,7 +132,7 @@ def calculate_keyword_similarity(student_answer, reference_answers, priority_key
 # -------- MAIN TRAINING SCRIPT --------
 
 # Path to the CSV file
-csv_file_path = r"ModelTraining\AutoGradeAI_generated_dataset.csv"
+csv_file_path = r"ModelTraining\AutoGradeAI_enhanced_dataset2.csv"
 
 # Read the CSV file
 print("Reading CSV file...")
