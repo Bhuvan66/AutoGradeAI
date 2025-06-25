@@ -5,7 +5,80 @@ import nltk
 from nltk.corpus import stopwords
 import string
 import re
+import joblib
+import numpy as np
+import torch
+from transformers import AutoTokenizer, AutoModel
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
+# Load the no-keywords grading model
+model_path = "random_forest_grading_model_no_keywords.joblib"
+if os.path.exists(model_path):
+    grading_model = joblib.load(model_path)
+    print("Loaded no-keywords grading model.")
+else:
+    grading_model = None
+    print("Warning: No-keywords grading model not found.")
+
+# Initialize NLP models for grading
+try:
+    tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+    bert_model = AutoModel.from_pretrained('bert-base-uncased')
+    sbert_model = SentenceTransformer('all-MiniLM-L6-v2')
+    print("Loaded NLP models for grading.")
+except Exception as e:
+    print(f"Error loading NLP models: {e}")
+    tokenizer = bert_model = sbert_model = None
+
+def get_bert_embedding(text):
+    """Get BERT embedding for a given text."""
+    if not tokenizer or not bert_model:
+        return None
+    inputs = tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=128)
+    with torch.no_grad():
+        outputs = bert_model(**inputs)
+    embeddings = outputs.last_hidden_state[:, 0, :].numpy()
+    return embeddings
+
+def calculate_bert_similarity(student_answer, reference_answer):
+    """Calculate BERT-based similarity between two texts."""
+    embedding1 = get_bert_embedding(student_answer)
+    embedding2 = get_bert_embedding(reference_answer)
+    if embedding1 is None or embedding2 is None:
+        return 0.0
+    similarity = cosine_similarity(embedding1, embedding2)[0][0]
+    return similarity
+
+def calculate_sbert_similarity(student_answer, reference_answer):
+    """Calculate SBERT-based similarity between two texts."""
+    if not sbert_model:
+        return 0.0
+    emb1 = sbert_model.encode([student_answer])[0]
+    emb2 = sbert_model.encode([reference_answer])[0]
+    sim = cosine_similarity([emb1], [emb2])[0][0]
+    return sim
+
+def grade_answer(student_answer, reference_answer):
+    """Grade student answer using the no-keywords model."""
+    if not grading_model or not student_answer.strip() or not reference_answer.strip():
+        return 0.0, "Grading unavailable"
+    
+    try:
+        # Calculate features (only BERT and SBERT similarities)
+        bert_sim = calculate_bert_similarity(student_answer, reference_answer)
+        sbert_sim = calculate_sbert_similarity(student_answer, reference_answer)
+        
+        # Prepare features for prediction
+        features = np.array([[bert_sim, sbert_sim]])
+        
+        # Predict score
+        predicted_score = grading_model.predict(features)[0]
+        predicted_score = max(0, min(100, predicted_score))  # Clamp between 0-100
+        
+        return predicted_score, f"BERT Similarity: {bert_sim:.3f}, SBERT Similarity: {sbert_sim:.3f}"
+    except Exception as e:
+        return 0.0, f"Grading error: {str(e)}"
 
 # Function to analyze each image
 def analyze_single_image(image, diagram_type):
@@ -96,6 +169,17 @@ def analyze_single_image(image, diagram_type):
 
     return response['message']['content']
 
+# Main function to handle single image analysis and grading
+def main_process(single_img, diagram_type, reference_answer=None):
+    answer = analyze_single_image(single_img, diagram_type)
+    
+    # Add grading if reference answer is provided
+    if reference_answer and reference_answer.strip():
+        score, details = grade_answer(answer, reference_answer)
+        return answer, f"Score: {score:.1f}/100\nDetails: {details}"
+    else:
+        return answer, "No reference answer provided for grading"
+
 # Main function to handle single image analysis
 def main_process(single_img, diagram_type):
     answer = analyze_single_image(single_img, diagram_type)
@@ -112,8 +196,8 @@ with gr.Blocks(title="Diagram Analysis Tool") as demo:
     .gr-markdown h1, .gr-markdown h2 { color: #2d3748; }
     </style>
     """)
-    gr.Markdown("# Diagram Analysis")
-    gr.Markdown("Upload a diagram image and select the diagram type for analysis.")
+    gr.Markdown("# Diagram Analysis with Auto-Grading")
+    gr.Markdown("Upload a diagram image, select the diagram type, and optionally provide a reference answer for auto-grading.")
 
     with gr.Row():
         single_img = gr.Image(type="filepath", label="Upload Diagram Image")
@@ -121,22 +205,29 @@ with gr.Blocks(title="Diagram Analysis Tool") as demo:
     diagram_type = gr.Radio(
         choices=[
             "Flowchart", "Block Diagram", "Graph/Chart", "Table",
-            "ER Diagram", "Network Diagram", "UML Diagram",
+            "ER Diagram", "Network Diagram", "UML Diagram", 
             "Circuit Diagram", "Scientific/Biological Diagram", "Mind Map/Concept Map"
         ],
         value="Flowchart",
         label="Select Diagram Type"
     )
     
+    reference_answer = gr.Textbox(
+        label="Reference Answer (Optional - for auto-grading)", 
+        placeholder="Enter the expected/correct answer to enable auto-grading...",
+        lines=4
+    )
+    
     analyze_btn = gr.Button("Analyze Image", variant="primary")
 
     answer_box = gr.Textbox(label="Diagram Analysis", interactive=False, lines=8)
+    grading_box = gr.Textbox(label="Auto-Grading Results", interactive=False, lines=3)
 
     # --- Event handlers ---
     analyze_btn.click(
         main_process,
-        inputs=[single_img, diagram_type],
-        outputs=[answer_box]
+        inputs=[single_img, diagram_type, reference_answer],
+        outputs=[answer_box, grading_box]
     )
 
 if __name__ == "__main__":

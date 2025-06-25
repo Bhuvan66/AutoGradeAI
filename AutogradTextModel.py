@@ -12,6 +12,7 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer  # Added import
 import os
 import json
+import joblib
 
 nltk.download('punkt')
 nltk.download('stopwords')
@@ -19,6 +20,15 @@ nltk.download('stopwords')
 tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
 model = AutoModel.from_pretrained('bert-base-uncased')
 sbert_model = SentenceTransformer('all-MiniLM-L6-v2')  # Added SBERT model
+
+# Load the trained Random Forest model
+model_path = os.path.join(os.path.dirname(__file__), "random_forest_grading_model.joblib")
+if os.path.exists(model_path):
+    rf_model = joblib.load(model_path)
+    print("Loaded Random Forest grading model")
+else:
+    print(f"Warning: Model not found at {model_path}")
+    rf_model = None
 
 # --- Keyword Extraction Logic (moved from image model) ---
 
@@ -200,6 +210,17 @@ def calculate_keyword_similarity(student_answer, reference_answers, priority_key
 
     return keyword_similarity, missing_keywords, critical_missing, keyword_similarity * 100
 
+def predict_score_with_rf(bert_similarity, sbert_similarity, keyword_similarity):
+    """Predict score using the trained Random Forest model"""
+    if rf_model is None:
+        return 0.5  # Default score if model not loaded
+    
+    features = np.array([[bert_similarity, sbert_similarity, keyword_similarity]])
+    predicted_score = rf_model.predict(features)[0]
+    
+    # Ensure score is between 0 and 1
+    return max(0.0, min(1.0, predicted_score))
+
 def generate_feedback(similarity, grade, missing_keywords, critical_missing):
     base_feedback = {
         'A': "Excellent answer! Your response matches the expected answer very well.",
@@ -226,50 +247,41 @@ def normalize_score_z(raw_score, mean=0.6, std=0.15):
 def grade_answer(student_answer, reference_answers, thresholds=None, priority_keywords=None, weights=None):
     # Default thresholds for text grading if not provided
     if thresholds is None:
-        thresholds = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
-    
-    # Default weights for text grading if not provided
-    if weights is None:
-        weights = [0.25, 0.55, 0.2]  # [bert_weight, sbert_weight, keyword_weight]
+        thresholds = {'A': 0.9, 'B': 0.8, 'C': 0.65, 'D': 0.25, 'F': 0.0}
 
     best_semantic_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
-
-    # Calculate SBERT similarity (not used for grading, just for output)
     best_sbert_similarity = max(calculate_sbert_similarity(student_answer, ref) for ref in reference_answers)
 
     keyword_similarity, missing_keywords, critical_missing, critical_match_percent = calculate_keyword_similarity(
         student_answer, reference_answers, priority_keywords
     )
 
-    # Use configurable weights
-    combined_similarity = (best_semantic_similarity * weights[0]) + (best_sbert_similarity * weights[1]) + (keyword_similarity * weights[2])
+    # Use Random Forest model to predict score
+    predicted_score = predict_score_with_rf(best_semantic_similarity, best_sbert_similarity, keyword_similarity)
 
-    # Use new z-normalization approach for bell curve scaling
-    bell_score = normalize_score_z(combined_similarity)
-
-    # Assign grade based on scaled bell_score
-    if bell_score >= thresholds['A']:
+    # Assign grade based on predicted score
+    if predicted_score >= thresholds['A']:
         grade = 'A'
-    elif bell_score >= thresholds['B']:
+    elif predicted_score >= thresholds['B']:
         grade = 'B'
-    elif bell_score >= thresholds['C']:
+    elif predicted_score >= thresholds['C']:
         grade = 'C'
-    elif bell_score >= thresholds['D']:
+    elif predicted_score >= thresholds['D']:
         grade = 'D'
     else:
         grade = 'F'
 
     return {
         'semantic_similarity': best_semantic_similarity,
-        'sbert_similarity': best_sbert_similarity,  # Added SBERT similarity to result
+        'sbert_similarity': best_sbert_similarity,
         'keyword_similarity': keyword_similarity,
-        'combined_similarity': combined_similarity,
-        'bell_scaled_score': bell_score,
+        'predicted_score': predicted_score,
+        'bell_scaled_score': predicted_score * 100,  # Convert to 0-100 scale
         'grade': grade,
         'missing_keywords': missing_keywords,
         'critical_missing': critical_missing,
         'critical_match_percent': critical_match_percent,
-        'feedback': generate_feedback(combined_similarity, grade, missing_keywords, critical_missing)
+        'feedback': generate_feedback(predicted_score, grade, missing_keywords, critical_missing)
     }
 
 def gradio_answer_grader(student_answer, reference_answers, priority_keyword_input):
@@ -278,12 +290,13 @@ def gradio_answer_grader(student_answer, reference_answers, priority_keyword_inp
     result = grade_answer(student_answer, ref_answers_list, priority_keywords=priority_keywords)
 
     return (
+        f"**Random Forest Model Results:**\n"
         f"Semantic Similarity (BERT): {result['semantic_similarity']:.4f}\n"
-        f"Semantic Similarity (SBERT all-MiniLM-L6-v2): {result['sbert_similarity']:.4f}\n"
-        f"Keyword Match Score (weighted): {result['keyword_similarity']:.4f}\n"
+        f"Semantic Similarity (SBERT): {result['sbert_similarity']:.4f}\n"
+        f"Keyword Match Score: {result['keyword_similarity']:.4f}\n"
         f"Weighted Keyword Match Percent: {result['critical_match_percent']:.2f}%\n"
-        f"Combined Score (raw): {result['combined_similarity']:.4f}\n"
-        f"Combined Score (custom scaled 0-100): {result['bell_scaled_score']:.2f}\n"
+        f"Predicted Score: {result['predicted_score']:.4f}\n"
+        f"Scaled Score (0-100): {result['bell_scaled_score']:.2f}\n"
         f"Grade: {result['grade']}\n"
         f"Feedback: {result['feedback']}"
     )
@@ -296,8 +309,8 @@ iface = gr.Interface(
         gr.Textbox(label="Priority Keywords (e.g., high: keyword1, keyword2...)")
     ],
     outputs=gr.Textbox(label="Grading Result"),
-    title="Answer Grading System with Keyword Priorities",
-    description="Grades student answers using BERT-based semantic similarity and priority-weighted keyword matching."
+    title="Answer Grading System with Random Forest Model",
+    description="Grades student answers using trained Random Forest model with BERT/SBERT similarity and keyword matching."
 )
 
 # --- Keyword Extraction UI (added after grading interface) ---
@@ -356,8 +369,8 @@ with gr.Blocks(title="Keyword Extraction Tool") as kw_demo:
 
 if __name__ == "__main__":
     with gr.Blocks(title="Answer Grading and Keyword Extraction Tool") as app:
-        gr.Markdown("# Answer Grading System with Keyword Priorities")
-        gr.Markdown("Grades student answers using BERT-based semantic similarity and priority-weighted keyword matching.")
+        gr.Markdown("# Answer Grading System with Random Forest Model")
+        gr.Markdown("Grades student answers using trained Random Forest model with BERT/SBERT similarity and keyword matching.")
 
         with gr.Row():
             student_answer = gr.Textbox(label="Student Answer")

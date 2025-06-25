@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-import time
 import torch
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
@@ -13,13 +12,8 @@ import json
 import yake
 from keybert import KeyBERT
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.linear_model import Ridge
-from sklearn.pipeline import Pipeline
-from sklearn.neural_network import MLPRegressor
-from sklearn.metrics import (mean_squared_error, r2_score, 
-                           mean_absolute_error, median_absolute_error)
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
 import joblib
 
 # Make sure NLTK resources are downloaded
@@ -180,83 +174,22 @@ y = np.array(labels)
 # Train-test split
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Initialize models
-models = {
-    "Polynomial (Deg 4)": Pipeline([
-        ('poly', PolynomialFeatures(degree=4)),
-        ('ridge', Ridge(alpha=0.5))
-    ]),
-    "Random Forest": RandomForestRegressor(n_estimators=300, random_state=42),
-    "Gradient Boosting": GradientBoostingRegressor(n_estimators=300, random_state=42),
-    "MLP":MLPRegressor(
-    hidden_layer_sizes=(1500, 1000, 500),  # Added layer
-    activation='relu',                   # Changed from default tanh
-    solver='adam',                       # Better for medium datasets
-    alpha=0.001,                         # Stronger regularization
-    learning_rate='adaptive',            # Better convergence
-    max_iter=1000,
-    early_stopping=True,                 # Prevent overfitting
-    validation_fraction=0.1,
-    random_state=42
-)
-}
+# Train Random Forest model
+print("\nTraining Random Forest model...")
+model = RandomForestRegressor(n_estimators=300, random_state=42)
+model.fit(X_train, y_train)
 
-# Results storage
-results = []
+# Quick evaluation
+y_pred = model.predict(X_test)
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
 
-# Train and evaluate models
-print("\nTraining models...")
-for name, model in models.items():
-    print(f"Training {name}...")
-    start_time = time.time()
-    
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    
-    # Calculate metrics
-    abs_errors = np.abs(y_test - y_pred)
-    metrics = {
-        'Model': name,
-        'MSE': mean_squared_error(y_test, y_pred),
-        'R2': r2_score(y_test, y_pred),
-        'MAE': mean_absolute_error(y_test, y_pred),
-        'MedAE': median_absolute_error(y_test, y_pred),
-        'MaxError': np.max(abs_errors),
-        'Within_0.05': (abs_errors < 0.05).mean(),
-        'Within_0.1': (abs_errors < 0.1).mean(),
-        'Train_Time': time.time() - start_time
-    }
-    results.append(metrics)
-    
-    print(f"Completed {name} in {metrics['Train_Time']:.2f}s")
+print(f"Random Forest - MSE: {mse:.4f}, R²: {r2:.4f}")
 
-# Create and save results DataFrame
-results_df = pd.DataFrame(results)
-results_csv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                               "model_metrics.csv")
-results_df.to_csv(results_csv_path, index=False)
-print(f"\nSaved metrics to {results_csv_path}")
+# Save the model
+model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                         "random_forest_grading_model.joblib")
+joblib.dump(model, model_path)
+print(f"Model saved to {model_path}")
 
-# Identify and save best model
-best_model_info = results_df.loc[results_df['R2'].idxmax()]
-best_model = models[best_model_info['Model']]
-best_model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                              "best_model.joblib")
-joblib.dump(best_model, best_model_path)
-print(f"Saved best model ({best_model_info['Model']}) to {best_model_path}")
-
-# Display results
-print("\nModel Evaluation Results:")
-print(results_df.round(4).to_string(index=False))
-
-# Feature importance for tree-based models
-print("\nFeature Importances:")
-if hasattr(best_model, 'feature_importances_'):
-    for name, importance in zip(["BERT", "SBERT", "Keyword"], best_model.feature_importances_):
-        print(f"{name}: {importance:.4f}")
-elif hasattr(best_model, 'named_steps') and hasattr(best_model.named_steps['ridge'], 'coef_'):
-    print("Polynomial feature coefficients available")
-else:
-    print("Feature importances not available for this model type")
-
-print("\nTraining complete!")
+print("Training complete!")
