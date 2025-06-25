@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 
-def inflate_ai_scores(input_file_path, output_file_path, inflation_rate=0.10):
+def inflate_ai_scores(input_file_path, output_file_path, inflation_rate=0.20):
     """
     Inflate AI scores by specified percentage while ensuring they don't exceed 100%
     
@@ -34,8 +34,18 @@ def inflate_ai_scores(input_file_path, output_file_path, inflation_rate=0.10):
         # Create a copy of the dataframe
         inflated_df = df.copy()
         
-        # Apply 10% inflation and cap at 100
-        inflated_df[ai_score_column] = (inflated_df[ai_score_column] * (1 + inflation_rate)).clip(upper=100)
+        # Apply inflation and cap at 100 (or 1.0 if scores are in 0-1 range)
+        inflated_scores = inflated_df[ai_score_column] * (1 + inflation_rate)
+        
+        # Check if scores are in 0-1 range or 0-100 range
+        max_original_score = df[ai_score_column].max()
+        if max_original_score <= 1.0:
+            # Scores are in 0-1 range, cap at 1.0
+            inflated_df[ai_score_column] = inflated_scores.clip(upper=1.0)
+        else:
+            # Scores are in 0-100 range, cap at 100
+            inflated_df[ai_score_column] = inflated_scores.clip(upper=100)
+
         
         # Save to new CSV file
         inflated_df.to_csv(output_file_path, index=False)

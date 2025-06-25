@@ -366,7 +366,7 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     else:
         reference_bytes = reference_image.read()
 
-    # Modified prompt to accept 70% similarity
+    # Modified prompt to thoroughly check each sentence individually
     comparison_prompt = (
         "You are given two diagrams: the first is a student's answer and the second is the reference/correct answer.\n\n"
         "TASK 1 - DESCRIBE REFERENCE IMAGE:\n"
@@ -377,26 +377,28 @@ def analyze_both_images_for_comparison(student_image, reference_image):
         "- There is a decision diamond labeled 'x > 5?'.\n"
         "- The start oval connects to the decision diamond with an arrow.\n"
         "- The decision diamond has two outputs: 'Yes' and 'No'.\n\n"
-        "TASK 2 - FIND MATCHING SENTENCES:\n"
-        "Now look at the first image (student's answer). Compare it carefully with the reference.\n"
-        "From the sentences you wrote about the reference, include sentences that are AT LEAST 70% similar "
-        "between the two images. Consider these as matches:\n"
-        "- Similar shapes (even if slightly different styles)\n"
-        "- Similar text labels (even with minor spelling differences or synonyms)\n"
-        "- Similar connections (even if arrows are slightly different)\n"
-        "- Similar positioning or flow (even if not exactly the same)\n"
-        "- Similar concepts expressed differently\n\n"
-        "Be more lenient in your matching - if the student captured the essence of what's described "
-        "in the reference, even if it's not perfectly identical, include that sentence.\n"
-        "For example:\n"
-        "- 'Start' vs 'Begin' should be considered a match\n"
-        "- Rectangle vs rounded rectangle should be considered a match\n"
-        "- 'x > 5' vs 'x greater than 5' should be considered a match\n\n"
+        "TASK 2 - VERIFY EACH SENTENCE INDIVIDUALLY:\n"
+        "Now look at the first image (student's answer). For EACH INDIVIDUAL sentence you wrote about the reference, "
+        "carefully examine the student's image and ask these specific questions:\n\n"
+        "For each sentence, check:\n"
+        "1. Does this exact component exist in the student image?\n"
+        "2. Is the shape type correct (oval, rectangle, diamond, etc.)?\n"
+        "3. Is the text content at least 50% similar?\n"
+        "4. If it's a connection, does this connection actually exist?\n"
+        "5. Are the spatial relationships accurate?\n\n"
+        "STRICT VERIFICATION RULES:\n"
+        "- If ANY major element of the sentence is wrong, DO NOT include it\n"
+        "- If the component doesn't exist at all in student image, DO NOT include it\n"
+        "- If the shape is completely different (oval vs rectangle), DO NOT include it\n"
+        "- If the text is completely different, DO NOT include it\n"
+        "- If the connection doesn't exist, DO NOT include it\n"
+        "- Only include if the sentence is factually accurate about the student's diagram\n\n"
+        "Go through each sentence one by one and verify it individually against the student image.\n\n"
         "Format your response exactly as:\n"
         "REFERENCE DESCRIPTION:\n"
         "[Each unique sentence on a new line]\n\n"
         "MATCHING SENTENCES:\n"
-        "[Sentences that are at least 70% similar between both images]"
+        "[Only sentences that are factually accurate about the student's image after individual verification]"
     )
     
     response = chat(
@@ -448,6 +450,7 @@ def combined_grader(
     if student_text.strip() and reference_text.strip():
         ref_answers_list = [ans.strip() for ans in reference_text.split('||') if ans.strip()]
         priority_keywords = parse_priority_keywords(priority_keywords_text)
+        
         grade = grade_text_with_keywords(student_text, ref_answers_list, priority_keywords, text_thresholds)
         text_grade_result = (
             f"**Text Answer Grading (Random Forest Model - With Keywords)**\n"
@@ -474,6 +477,11 @@ def combined_grader(
         
         # Use the matching sentences for grading (this represents what the student got right)
         grade = grade_image_no_keywords(matching_sentences, [reference_desc], diagram_thresholds)
+        
+        # Truncate long descriptions to prevent HTTP errors
+        ref_display = reference_desc[:500] + "..." if len(reference_desc) > 500 else reference_desc
+        match_display = matching_sentences[:500] + "..." if len(matching_sentences) > 500 else matching_sentences
+        
         diagram_grade_result = (
             f"**Diagram Grading (Random Forest Model - No Keywords)**\n"
             f"Semantic Similarity (BERT): {grade['semantic_similarity']:.4f}\n"
@@ -481,8 +489,8 @@ def combined_grader(
             f"Predicted Score: {grade['predicted_score']:.2f}/100\n"
             f"Grade: {grade['grade']}\n"
             f"Feedback: {grade['feedback']}\n\n"
-            f"**Reference Answer (Complete Description):**\n{reference_desc}\n\n"
-            f"**What Student Got Correct (Matching Sentences Only):**\n{matching_sentences}"
+            f"**Reference Answer (Complete Description):**\n{ref_display}\n\n"
+            f"**What Student Got Correct (Matching Elements):**\n{match_display}"
         )
     elif student_diagram is not None:
         diagram_grade_result = "Student diagram provided, but no reference diagram for grading."
@@ -541,6 +549,18 @@ if __name__ == "__main__":
     text_grade_result = gr.Textbox(label="Text Grading Result (With Keywords)", interactive=False, lines=8)
     diagram_grade_result = gr.Textbox(label="Diagram Grading Result (No Keywords)", interactive=False, lines=8)
 
+    grade_btn.click(
+        combined_grader,
+        inputs=[
+            student_text, student_diagram,
+            reference_text, reference_diagram, priority_keywords_text
+        ],
+        outputs=[text_grade_result, diagram_grade_result]
+    )
+
+
+if __name__ == "__main__":
+    demo.launch()
     grade_btn.click(
         combined_grader,
         inputs=[
