@@ -214,6 +214,9 @@ def predict_score_with_keywords(bert_similarity, sbert_similarity, keyword_simil
     features = np.array([[bert_similarity, sbert_similarity, keyword_similarity]])
     predicted_score = rf_model_keywords.predict(features)[0]
     
+    # Convert from 0-1 range to 0-100 range
+    predicted_score = predicted_score * 100
+    
     # Ensure score is between 0 and 100
     return max(0.0, min(100.0, predicted_score))
 
@@ -224,6 +227,9 @@ def predict_score_no_keywords(bert_similarity, sbert_similarity):
     
     features = np.array([[bert_similarity, sbert_similarity]])
     predicted_score = rf_model_no_keywords.predict(features)[0]
+    
+    # Convert from 0-1 range to 0-100 range
+    predicted_score = predicted_score * 100
     
     # Ensure score is between 0 and 100
     return max(0.0, min(100.0, predicted_score))
@@ -270,6 +276,7 @@ def grade_text_with_keywords(student_answer, reference_answers, priority_keyword
     
     # Convert to grade
     grade = score_to_grade(predicted_score, thresholds)
+
     
     return {
         'semantic_similarity': best_bert_similarity,
@@ -289,21 +296,8 @@ def grade_image_no_keywords(student_answer, reference_answers, thresholds=None):
     best_bert_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
     best_sbert_similarity = max(calculate_sbert_similarity(student_answer, ref) for ref in reference_answers)
     
-    # Check if we have very high similarity (near-identical content)
-    if best_bert_similarity > 0.9 and best_sbert_similarity > 0.9:
-        # For very similar content, calculate score based on content ratio
-        student_lines = len([line for line in student_answer.split('\n') if line.strip()])
-        reference_lines = len([line for line in reference_answers[0].split('\n') if line.strip()])
-        
-        if student_lines > 0 and reference_lines > 0:
-            content_ratio = min(student_lines / reference_lines, 1.0)
-            # High similarity + good content ratio = high score
-            predicted_score = (best_bert_similarity + best_sbert_similarity) * 50 * content_ratio
-        else:
-            predicted_score = (best_bert_similarity + best_sbert_similarity) * 50
-    else:
-        # Use Random Forest for lower similarity cases
-        predicted_score = predict_score_no_keywords(best_bert_similarity, best_sbert_similarity)
+    # Always use Random Forest model for prediction
+    predicted_score = predict_score_no_keywords(best_bert_similarity, best_sbert_similarity)
     
     # Ensure score is between 0 and 100
     predicted_score = max(0.0, min(100.0, predicted_score))
@@ -443,7 +437,7 @@ def combined_grader(
     # Text grading thresholds
     text_thresholds = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
     # Diagram grading thresholds (stricter)
-    diagram_thresholds = {'A': 85, 'B': 80, 'C': 77, 'D': 75, 'F': 0}
+    diagram_thresholds = {'A': 80, 'B': 60, 'C': 40, 'D': 20, 'F': 0}
     
     # --- Text grading (with keywords) ---
     text_grade_result = ""
@@ -571,5 +565,4 @@ if __name__ == "__main__":
     )
 
 
-if __name__ == "__main__":
-    demo.launch()
+
