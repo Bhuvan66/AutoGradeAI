@@ -36,32 +36,17 @@ print("Loaded KeyBERT model.")
 
 # Neural Network Model definition
 class GradingNN(torch.nn.Module):
-    def __init__(self, input_size=3):
+    def __init__(self, input_size=7):
         super(GradingNN, self).__init__()
-        # Enhanced network matching the trained model architecture
+        # Simplified network architecture matching TrainNN.py
         self.network = torch.nn.Sequential(
             torch.nn.Linear(input_size, 64),
-            torch.nn.LeakyReLU(),
-            torch.nn.BatchNorm1d(64),
-            torch.nn.Dropout(0.3),
-            
-            torch.nn.Linear(64, 128),
-            torch.nn.LeakyReLU(),
-            torch.nn.BatchNorm1d(128),
-            torch.nn.Dropout(0.3),
-            
-            torch.nn.Linear(128, 128),
-            torch.nn.LeakyReLU(),
-            torch.nn.BatchNorm1d(128),
-            torch.nn.Dropout(0.3),
-            
-            torch.nn.Linear(128, 64),
-            torch.nn.LeakyReLU(),
+            torch.nn.ReLU(),
             torch.nn.BatchNorm1d(64),
             torch.nn.Dropout(0.2),
             
             torch.nn.Linear(64, 32),
-            torch.nn.LeakyReLU(),
+            torch.nn.ReLU(),
             torch.nn.BatchNorm1d(32),
             
             torch.nn.Linear(32, 1),
@@ -72,8 +57,20 @@ class GradingNN(torch.nn.Module):
         return self.network(x).squeeze()
 
 # Load the trained neural network model
-model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trained_nn_grading_model.pt")
-nn_model = GradingNN()
+model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trained_nn_grading_modelcontrolled.pt")
+config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_config.json")
+
+# Try to load model config if available
+input_size = 7  # Default to new model size
+if os.path.exists(config_path):
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+            input_size = config.get('input_size', 7)
+    except:
+        print("Warning: Could not load model config, using default input_size=7")
+
+nn_model = GradingNN(input_size=input_size)
 nn_model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
 nn_model.eval()
 
@@ -177,8 +174,27 @@ def predict_score_nn(bert_similarity, sbert_similarity, keyword_similarity):
     - Better at identifying patterns in the data
     - More flexible in handling various input combinations
     """
-    # Prepare input features for prediction
-    features = torch.FloatTensor([[bert_similarity, sbert_similarity, keyword_similarity]])
+    # Calculate derived features
+    product_similarity = bert_similarity * sbert_similarity * keyword_similarity
+    bert_similarity_squared = bert_similarity ** 2
+    sbert_similarity_squared = sbert_similarity ** 2
+    
+    # Calculate harmonic mean
+    if bert_similarity > 0 and sbert_similarity > 0 and keyword_similarity > 0:
+        harmonic_mean = 3 / (1/bert_similarity + 1/sbert_similarity + 1/keyword_similarity)
+    else:
+        harmonic_mean = 0
+    
+    # Prepare input features for prediction with all 7 features
+    features = torch.FloatTensor([[
+        bert_similarity, 
+        sbert_similarity, 
+        keyword_similarity,
+        product_similarity,
+        bert_similarity_squared,
+        sbert_similarity_squared,
+        harmonic_mean
+    ]])
     
     # Get prediction from neural network
     with torch.no_grad():
@@ -280,6 +296,21 @@ iface = gr.Interface(
          "Photosynthesis is the process by which green plants and some other organisms use sunlight to synthesize nutrients from carbon dioxide and water. In plants, photosynthesis occurs in chloroplasts and generates oxygen as a byproduct."]
     ]
 )
+
+if __name__ == "__main__":
+    iface.launch()
+    print("Neural Network Gradio app is running!")
+    outputs=gr.Markdown(),
+    title="AutoGradeAI - Neural Network Grading",
+    description="Enter a student answer and a reference answer to get an automatic grade using our neural network model.",
+    theme="huggingface",
+    examples=[
+        ["The water cycle is the process where water circulates between the earth's oceans, atmosphere, and land. It involves evaporation, condensation, and precipitation.", 
+         "The water cycle, also known as the hydrologic cycle, is the continuous movement of water on, above, and below the surface of the Earth. Water changes between liquid, vapor, and ice states through processes of evaporation, transpiration, condensation, precipitation, and runoff."],
+        ["Photosynthesis is when plants make food using sunlight.", 
+         "Photosynthesis is the process by which green plants and some other organisms use sunlight to synthesize nutrients from carbon dioxide and water. In plants, photosynthesis occurs in chloroplasts and generates oxygen as a byproduct."]
+    ]
+
 
 if __name__ == "__main__":
     iface.launch()

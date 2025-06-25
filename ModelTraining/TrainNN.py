@@ -150,32 +150,17 @@ class GradingDataset(Dataset):
         return self.features[idx], self.labels[idx]
 
 class GradingNN(nn.Module):
-    def __init__(self, input_size=3):
+    def __init__(self, input_size=7):
         super(GradingNN, self).__init__()
-        # Enhanced network with more layers and neurons
+        # Simpler network architecture - fewer layers and parameters
         self.network = nn.Sequential(
             nn.Linear(input_size, 64),
-            nn.LeakyReLU(),
-            nn.BatchNorm1d(64),
-            nn.Dropout(0.3),
-            
-            nn.Linear(64, 128),
-            nn.LeakyReLU(),
-            nn.BatchNorm1d(128),
-            nn.Dropout(0.3),
-            
-            nn.Linear(128, 128),
-            nn.LeakyReLU(),
-            nn.BatchNorm1d(128),
-            nn.Dropout(0.3),
-            
-            nn.Linear(128, 64),
-            nn.LeakyReLU(),
+            nn.ReLU(),
             nn.BatchNorm1d(64),
             nn.Dropout(0.2),
             
             nn.Linear(64, 32),
-            nn.LeakyReLU(),
+            nn.ReLU(),
             nn.BatchNorm1d(32),
             
             nn.Linear(32, 1),
@@ -188,7 +173,7 @@ class GradingNN(nn.Module):
 # -------- MAIN TRAINING SCRIPT --------
 
 # Path to the CSV file
-csv_file_path = r"ModelTraining\AutoGradeAI_enhanced_dataset4.csv"
+csv_file_path = r"ModelTraining\AutoGradeAI_controlled_dataset.csv"
 
 # Read the CSV file
 print("Reading CSV file...")
@@ -217,8 +202,68 @@ for index, row in df.iterrows():
         student_answer, [preferred_answer], priority_keywords
     )
     
-    # Store features and label
-    features.append([bert_similarity, sbert_similarity, keyword_similarity])
+    # Polynomial degree 4 features
+    # Original features
+    b = bert_similarity
+    s = sbert_similarity  
+    k = keyword_similarity
+    
+    # Degree 2 features
+    b2 = b ** 2
+    s2 = s ** 2
+    k2 = k ** 2
+    bs = b * s
+    bk = b * k
+    sk = s * k
+    
+    # Degree 3 features
+    b3 = b ** 3
+    s3 = s ** 3
+    k3 = k ** 3
+    b2s = b2 * s
+    b2k = b2 * k
+    s2b = s2 * b
+    s2k = s2 * k
+    k2b = k2 * b
+    k2s = k2 * s
+    bsk = b * s * k
+    
+    # Degree 4 features
+    b4 = b ** 4
+    s4 = s ** 4
+    k4 = k ** 4
+    b3s = b3 * s
+    b3k = b3 * k
+    s3b = s3 * b
+    s3k = s3 * k
+    k3b = k3 * b
+    k3s = k3 * s
+    b2s2 = b2 * s2
+    b2k2 = b2 * k2
+    s2k2 = s2 * k2
+    b2sk = b2 * s * k
+    bs2k = b * s2 * k
+    bsk2 = b * s * k2
+    
+    # Calculate harmonic mean for additional feature
+    if b > 0 and s > 0 and k > 0:
+        harmonic_mean = 3 / (1/b + 1/s + 1/k)
+    else:
+        harmonic_mean = 0
+    
+    # Store expanded polynomial feature set (33 features total)
+    features.append([
+        # Original features (3)
+        b, s, k,
+        # Degree 2 features (6)
+        b2, s2, k2, bs, bk, sk,
+        # Degree 3 features (10)
+        b3, s3, k3, b2s, b2k, s2b, s2k, k2b, k2s, bsk,
+        # Degree 4 features (13)
+        b4, s4, k4, b3s, b3k, s3b, s3k, k3b, k3s, b2s2, b2k2, s2k2, b2sk, bs2k, bsk2,
+        # Additional feature (1)
+        harmonic_mean
+    ])
     labels.append(ai_score)
     
     # Print progress
@@ -244,16 +289,24 @@ test_loader = DataLoader(test_dataset, batch_size=batch_size)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-model = GradingNN().to(device)
+model = GradingNN(input_size=33).to(device)  # Updated for 33 polynomial features
 # Using a weighted MSE loss to penalize larger errors more heavily
 criterion = nn.MSELoss()
-# Reduced learning rate for better convergence and weight decay for regularization
-optimizer = optim.AdamW(model.parameters(), lr=0.0005, weight_decay=1e-4)
+# Improved optimizer configuration
+optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-5)
 # More aggressive scheduler with early stopping
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.3, patience=3)
 
+# Custom loss function to better fit the data
+def custom_loss(outputs, targets):
+    # MSE loss with additional penalty for larger errors
+    mse_loss = nn.MSELoss()(outputs, targets)
+    # Add L1 loss component for better fitting
+    l1_loss = nn.L1Loss()(outputs, targets)
+    return mse_loss + 0.2 * l1_loss
+
 # Training loop
-num_epochs = 200  # Increased epochs
+num_epochs = 300  # Increased epochs to allow more learning
 print(f"\nTraining neural network for {num_epochs} epochs...")
 
 train_losses = []
@@ -277,7 +330,7 @@ for epoch in range(num_epochs):
         # Forward pass
         optimizer.zero_grad()
         outputs = model(inputs)
-        loss = criterion(outputs, labels)
+        loss = custom_loss(outputs, labels)  # Use custom loss function
         
         # Backward and optimize
         loss.backward()
@@ -373,11 +426,21 @@ print(f"% of predictions within 0.1 of true value: {(abs_errors < 0.1).mean() * 
 
 # Save the model
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-model_path = os.path.join(parent_dir, "trained_nn_grading_model.pt")
+model_path = os.path.join(parent_dir, "trained_nn_grading_modelcontrolled.pt")
 torch.save(model.state_dict(), model_path)
 print(f"Neural network model saved to {model_path}")
 
-# Plot training and validation loss
+# Also save the model architecture details for easier loading
+model_config = {
+    "input_size": 33,  # Number of polynomial features
+    "architecture": "simplified",
+    "polynomial_degree": 4
+}
+with open(os.path.join(parent_dir, "model_config.json"), "w") as f:
+    json.dump(model_config, f)
+print("Saved model configuration")
+
+print("\nDone!")
 plt.figure(figsize=(12, 4))
 plt.subplot(1, 2, 1)
 plt.plot(train_losses, label='Training Loss')
@@ -419,28 +482,15 @@ nn_plot_path = os.path.join(parent_dir, "nn_prediction_vs_actual.png")
 plt.savefig(nn_plot_path)
 print(f"Saved prediction vs actual plot to {nn_plot_path}")
 
-# Create a class to easily use the trained model
-class NeuralNetworkGrader:
-    def __init__(self, model_path):
-        self.model = GradingNN()
-        self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-        self.model.eval()
-        
-    def predict_score(self, bert_similarity, sbert_similarity, keyword_similarity):
-        """Predict score using the neural network model"""
-        features = torch.FloatTensor([[bert_similarity, sbert_similarity, keyword_similarity]])
-        with torch.no_grad():
-            score = self.model(features).item()
-        return max(0.0, min(1.0, score))
-
 # Test the neural network on sample inputs
 print("\nNeural Network predictions for sample inputs:")
 sample_inputs = [
-    [0.9, 0.9, 0.9],  # Excellent match
-    [0.8, 0.7, 0.6],  # Good match
-    [0.6, 0.5, 0.5],  # Average match
-    [0.4, 0.3, 0.2],  # Below average match
-    [0.2, 0.1, 0.1]   # Poor match
+    # Format: [bert, sbert, keyword, product, bert^2, sbert^2, harmonic_mean]
+    [0.9, 0.9, 0.9, 0.729, 0.81, 0.81, 0.9],  # Excellent match
+    [0.8, 0.7, 0.6, 0.336, 0.64, 0.49, 0.686],  # Good match
+    [0.6, 0.5, 0.5, 0.15, 0.36, 0.25, 0.545],  # Average match
+    [0.4, 0.3, 0.2, 0.024, 0.16, 0.09, 0.277],  # Below average match
+    [0.2, 0.1, 0.1, 0.002, 0.04, 0.01, 0.122]   # Poor match
 ]
 
 model.eval()
@@ -449,21 +499,137 @@ for inputs in sample_inputs:
         prediction = model(torch.FloatTensor([inputs]).to(device)).item()
     print(f"BERT: {inputs[0]:.2f}, SBERT: {inputs[1]:.2f}, KW: {inputs[2]:.2f} => Score: {prediction:.4f}")
 
+# Also update the NeuralNetworkGrader class to handle the simpler architecture
+class NeuralNetworkGrader:
+    def __init__(self, model_path, config_path=None):
+        # Try to load config if available
+        input_size = 33  # Default to new model size
+        if config_path:
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                    input_size = config.get('input_size', 33)
+            except:
+                pass
+                
+        self.model = GradingNN(input_size=input_size)
+        self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+        self.model.eval()
+        
+    def predict_score(self, bert_similarity, sbert_similarity, keyword_similarity):
+        """Predict score using the neural network model with derived features"""
+        # Calculate derived features
+        product_similarity = bert_similarity * sbert_similarity * keyword_similarity
+        bert_similarity_squared = bert_similarity ** 2
+        sbert_similarity_squared = sbert_similarity ** 2
+        
+        # Calculate harmonic mean
+        if bert_similarity > 0 and sbert_similarity > 0 and keyword_similarity > 0:
+            harmonic_mean = 3 / (1/bert_similarity + 1/sbert_similarity + 1/keyword_similarity)
+        else:
+            harmonic_mean = 0
+            
+        # Create feature vector
+        features = torch.FloatTensor([[
+            bert_similarity, 
+            sbert_similarity, 
+            keyword_similarity,
+            product_similarity,
+            bert_similarity_squared,
+            sbert_similarity_squared,
+            harmonic_mean
+        ]])
+        
+        # Get prediction
+        with torch.no_grad():
+            score = self.model(features).item()
+        return max(0.0, min(1.0, score))
+
 # Save a sample usage script
 nn_usage_script = """
-from neural_network_grader import NeuralNetworkGrader
+import torch
+import json
+import os
+import numpy as np
 
-# Initialize the grader
-grader = NeuralNetworkGrader("trained_nn_grading_model.pt")
+class GradingNN(torch.nn.Module):
+    def __init__(self, input_size=7):
+        super(GradingNN, self).__init__()
+        # Simpler network architecture
+        self.network = torch.nn.Sequential(
+            torch.nn.Linear(input_size, 64),
+            torch.nn.ReLU(),
+            torch.nn.BatchNorm1d(64),
+            torch.nn.Dropout(0.2),
+            
+            torch.nn.Linear(64, 32),
+            torch.nn.ReLU(),
+            torch.nn.BatchNorm1d(32),
+            
+            torch.nn.Linear(32, 1),
+            torch.nn.Sigmoid()
+        )
+    
+    def forward(self, x):
+        return self.network(x).squeeze()
 
-# Use the grader to predict scores
-score = grader.predict_score(
-    bert_similarity=0.85,   # Semantic similarity from BERT
-    sbert_similarity=0.78,  # Sentence similarity from SBERT
-    keyword_similarity=0.92 # Keyword matching score
-)
+class NeuralNetworkGrader:
+    def __init__(self, model_path, config_path=None):
+        # Try to load config if available
+        input_size = 33  # Default to simplified model size
+        if config_path and os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                input_size = config.get('input_size', 33)
+                
+        self.model = GradingNN(input_size=input_size)
+        self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+        self.model.eval()
+        
+    def predict_score(self, bert_similarity, sbert_similarity, keyword_similarity):
+        \"\"\"Predict score using the neural network model with derived features\"""
+        # Calculate derived features
+        product_similarity = bert_similarity * sbert_similarity * keyword_similarity
+        bert_similarity_squared = bert_similarity ** 2
+        sbert_similarity_squared = sbert_similarity ** 2
+        
+        # Calculate harmonic mean
+        if bert_similarity > 0 and sbert_similarity > 0 and keyword_similarity > 0:
+            harmonic_mean = 3 / (1/bert_similarity + 1/sbert_similarity + 1/keyword_similarity)
+        else:
+            harmonic_mean = 0
+            
+        # Create feature vector
+        features = torch.FloatTensor([{
+            bert_similarity, 
+            sbert_similarity, 
+            keyword_similarity,
+            product_similarity,
+            bert_similarity_squared,
+            sbert_similarity_squared,
+            harmonic_mean
+        }])
+        
+        # Get prediction
+        with torch.no_grad():
+            score = self.model(features).item()
+        return max(0.0, min(1.0, score))
 
-print(f"Predicted score: {score:.2f}")
+# Example usage
+if __name__ == "__main__":
+    # Initialize the grader
+    model_path = "trained_nn_grading_modelcontrolled.pt"
+    config_path = "model_config.json"
+    grader = NeuralNetworkGrader(model_path, config_path)
+    
+    # Use the grader to predict scores
+    score = grader.predict_score(
+        bert_similarity=0.85,   # Semantic similarity from BERT
+        sbert_similarity=0.78,  # Sentence similarity from SBERT
+        keyword_similarity=0.92 # Keyword matching score
+    )
+    
+    print(f"Predicted score: {score:.2f}")
 """
 
 nn_usage_path = os.path.join(parent_dir, "neural_network_grader.py")
@@ -472,3 +638,4 @@ with open(nn_usage_path, "w") as f:
 
 print(f"Sample usage script saved to {nn_usage_path}")
 print("\nDone!")
+
