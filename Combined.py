@@ -176,16 +176,7 @@ def analyze_single_image(image):
         messages=[{'role': 'user', 'content': strict_prompt, 'images': [img_bytes]}]
     )
     
-    generated_text = response['message']['content']
-    
-    # Print the generated text for debugging
-    print("=" * 80)
-    print("LLaVA GENERATED TEXT:")
-    print("=" * 80)
-    print(generated_text)
-    print("=" * 80)
-    
-    return generated_text
+    return response['message']['content']
 
 def get_bert_embedding(text):
     """Get BERT embedding for a given text."""
@@ -298,8 +289,24 @@ def grade_image_no_keywords(student_answer, reference_answers, thresholds=None):
     best_bert_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
     best_sbert_similarity = max(calculate_sbert_similarity(student_answer, ref) for ref in reference_answers)
     
-    # Predict score using Random Forest without keywords
-    predicted_score = predict_score_no_keywords(best_bert_similarity, best_sbert_similarity)
+    # Check if we have very high similarity (near-identical content)
+    if best_bert_similarity > 0.9 and best_sbert_similarity > 0.9:
+        # For very similar content, calculate score based on content ratio
+        student_lines = len([line for line in student_answer.split('\n') if line.strip()])
+        reference_lines = len([line for line in reference_answers[0].split('\n') if line.strip()])
+        
+        if student_lines > 0 and reference_lines > 0:
+            content_ratio = min(student_lines / reference_lines, 1.0)
+            # High similarity + good content ratio = high score
+            predicted_score = (best_bert_similarity + best_sbert_similarity) * 50 * content_ratio
+        else:
+            predicted_score = (best_bert_similarity + best_sbert_similarity) * 50
+    else:
+        # Use Random Forest for lower similarity cases
+        predicted_score = predict_score_no_keywords(best_bert_similarity, best_sbert_similarity)
+    
+    # Ensure score is between 0 and 100
+    predicted_score = max(0.0, min(100.0, predicted_score))
     
     # Convert to grade
     grade = score_to_grade(predicted_score, thresholds)
@@ -341,6 +348,91 @@ def parse_priority_keywords(priority_keywords_text):
     
     return priority_keywords
 
+def analyze_both_images_for_comparison(student_image, reference_image):
+    """Analyze both images together using LLaVA to find common elements."""
+    if student_image is None or reference_image is None:
+        return "Please provide both images.", ""
+
+    # Load both images
+    if isinstance(student_image, str):
+        with open(student_image, 'rb') as img_file:
+            student_bytes = img_file.read()
+    else:
+        student_bytes = student_image.read()
+        
+    if isinstance(reference_image, str):
+        with open(reference_image, 'rb') as img_file:
+            reference_bytes = img_file.read()
+    else:
+        reference_bytes = reference_image.read()
+
+    # Modified prompt to accept 70% similarity
+    comparison_prompt = (
+        "You are given two diagrams: the first is a student's answer and the second is the reference/correct answer.\n\n"
+        "TASK 1 - DESCRIBE REFERENCE IMAGE:\n"
+        "Look at the second image (reference/teacher's answer) and describe it completely.\n"
+        "Write each unique fact as a separate sentence. Avoid repeating the same information.\n"
+        "Example format:\n"
+        "- The diagram has a start oval labeled 'Begin'.\n"
+        "- There is a decision diamond labeled 'x > 5?'.\n"
+        "- The start oval connects to the decision diamond with an arrow.\n"
+        "- The decision diamond has two outputs: 'Yes' and 'No'.\n\n"
+        "TASK 2 - FIND MATCHING SENTENCES:\n"
+        "Now look at the first image (student's answer). Compare it carefully with the reference.\n"
+        "From the sentences you wrote about the reference, include sentences that are AT LEAST 70% similar "
+        "between the two images. Consider these as matches:\n"
+        "- Similar shapes (even if slightly different styles)\n"
+        "- Similar text labels (even with minor spelling differences or synonyms)\n"
+        "- Similar connections (even if arrows are slightly different)\n"
+        "- Similar positioning or flow (even if not exactly the same)\n"
+        "- Similar concepts expressed differently\n\n"
+        "Be more lenient in your matching - if the student captured the essence of what's described "
+        "in the reference, even if it's not perfectly identical, include that sentence.\n"
+        "For example:\n"
+        "- 'Start' vs 'Begin' should be considered a match\n"
+        "- Rectangle vs rounded rectangle should be considered a match\n"
+        "- 'x > 5' vs 'x greater than 5' should be considered a match\n\n"
+        "Format your response exactly as:\n"
+        "REFERENCE DESCRIPTION:\n"
+        "[Each unique sentence on a new line]\n\n"
+        "MATCHING SENTENCES:\n"
+        "[Sentences that are at least 70% similar between both images]"
+    )
+    
+    response = chat(
+        model='llava',
+        messages=[{'role': 'user', 'content': comparison_prompt, 'images': [student_bytes, reference_bytes]}]
+    )
+    
+    full_analysis = response['message']['content']
+    
+    # Extract the two sections and remove duplicates
+    lines = full_analysis.split('\n')
+    reference_desc = ""
+    student_matching = ""
+    current_section = None
+    
+    # Use sets to track seen sentences and avoid duplicates
+    ref_sentences = set()
+    matching_sentences = set()
+    
+    for line in lines:
+        line = line.strip()
+        if "REFERENCE DESCRIPTION:" in line:
+            current_section = "ref"
+            continue
+        elif "MATCHING SENTENCES:" in line:
+            current_section = "student"
+            continue
+        elif current_section == "ref" and line and line not in ref_sentences:
+            ref_sentences.add(line)
+            reference_desc += line + "\n"
+        elif current_section == "student" and line and line not in matching_sentences:
+            matching_sentences.add(line)
+            student_matching += line + "\n"
+    
+    return reference_desc.strip(), student_matching.strip()
+
 # --- Main combined grading logic ---
 def combined_grader(
     student_text, student_diagram,
@@ -374,33 +466,23 @@ def combined_grader(
     else:
         text_grade_result = "No text answer or reference provided."
 
-    # --- Diagram grading (no keywords) ---
+    # --- Diagram grading (no keywords) using comparison analysis ---
     diagram_grade_result = ""
     if student_diagram is not None and reference_diagram is not None:
-        # Analyze student diagram with deterministic prompt
-        print("\n[DEBUG] Analyzing STUDENT diagram...")
-        student_analysis = analyze_single_image(student_diagram)
+        # Analyze both images together for comparison
+        reference_desc, matching_sentences = analyze_both_images_for_comparison(student_diagram, reference_diagram)
         
-        # Analyze reference diagram once (deterministic prompt should give consistent results)
-        print("\n[DEBUG] Analyzing REFERENCE diagram...")
-        reference_analysis = analyze_single_image(reference_diagram)
-        
-        # Print similarity calculation for debugging
-        print("\n[DEBUG] Calculating similarities...")
-        bert_sim = calculate_similarity(student_analysis, reference_analysis)
-        sbert_sim = calculate_sbert_similarity(student_analysis, reference_analysis)
-        print(f"BERT Similarity: {bert_sim:.4f}")
-        print(f"SBERT Similarity: {sbert_sim:.4f}")
-        
-        # Grade using Random Forest model without keywords
-        grade = grade_image_no_keywords(student_analysis, [reference_analysis], diagram_thresholds)
+        # Use the matching sentences for grading (this represents what the student got right)
+        grade = grade_image_no_keywords(matching_sentences, [reference_desc], diagram_thresholds)
         diagram_grade_result = (
             f"**Diagram Grading (Random Forest Model - No Keywords)**\n"
             f"Semantic Similarity (BERT): {grade['semantic_similarity']:.4f}\n"
             f"Semantic Similarity (SBERT): {grade['sbert_similarity']:.4f}\n"
             f"Predicted Score: {grade['predicted_score']:.2f}/100\n"
             f"Grade: {grade['grade']}\n"
-            f"Feedback: {grade['feedback']}\n"
+            f"Feedback: {grade['feedback']}\n\n"
+            f"**Reference Answer (Complete Description):**\n{reference_desc}\n\n"
+            f"**What Student Got Correct (Matching Sentences Only):**\n{matching_sentences}"
         )
     elif student_diagram is not None:
         diagram_grade_result = "Student diagram provided, but no reference diagram for grading."
@@ -462,11 +544,12 @@ if __name__ == "__main__":
     grade_btn.click(
         combined_grader,
         inputs=[
-            student_text, student_diagram, diagram_type,
+            student_text, student_diagram,
             reference_text, reference_diagram, priority_keywords_text
         ],
         outputs=[text_grade_result, diagram_grade_result]
     )
+
 
 if __name__ == "__main__":
     demo.launch()
