@@ -1,22 +1,26 @@
 import pandas as pd
+import numpy as np
 import time
 import torch
-import numpy as np
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import re
 import nltk
 from nltk.corpus import stopwords
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.neural_network import MLPRegressor
-from sklearn.metrics import mean_squared_error, r2_score
-import joblib
 import os
 import json
 import yake
 from keybert import KeyBERT
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import Ridge
+from sklearn.pipeline import Pipeline
+from sklearn.neural_network import MLPRegressor
+from sklearn.metrics import (mean_squared_error, r2_score, 
+                           mean_absolute_error, median_absolute_error)
+import joblib
 
 # Make sure NLTK resources are downloaded
 nltk.download('punkt', quiet=True)
@@ -33,10 +37,15 @@ COMMON_WORDS = COMMON_WORDS.union(set(stopwords.words('english')))
 # Initialize models for text processing
 print("Loading NLP models...")
 tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+print("Loaded BERT tokenizer.")
 model = AutoModel.from_pretrained('bert-base-uncased')
+print("Loaded BERT model.")
 sbert_model = SentenceTransformer('all-MiniLM-L6-v2')
+print("Loaded SBERT model.")
 kw_model = KeyBERT()
+print("Loaded KeyBERT model.")
 yake_extractor = yake.KeywordExtractor()
+print("Loaded YAKE extractor.")
 
 # Constants for keyword extraction
 KEYBERT_TOP_N = 8
@@ -129,17 +138,13 @@ def calculate_keyword_similarity(student_answer, reference_answers, priority_key
 
     return keyword_similarity, missing_keywords, critical_missing, keyword_similarity * 100
 
-# -------- MAIN TRAINING SCRIPT --------
-
-# Path to the CSV file
+# Load data
+print("Loading data...")
 csv_file_path = r"ModelTraining\AutoGradeAI_enhanced_dataset2.csv"
-
-# Read the CSV file
-print("Reading CSV file...")
 df = pd.read_csv(csv_file_path)
 
-# Extract features for training
-print("Extracting features for training...")
+# Feature extraction using actual NLP models
+print("Extracting features using NLP models...")
 features = []
 labels = []
 
@@ -161,7 +166,7 @@ for index, row in df.iterrows():
         student_answer, [preferred_answer], priority_keywords
     )
     
-    # Store features and label (using only one keyword feature)
+    # Store features and label
     features.append([bert_similarity, sbert_similarity, keyword_similarity])
     labels.append(ai_score)
     
@@ -169,243 +174,89 @@ for index, row in df.iterrows():
     if index % 10 == 0:
         print(f"Processed {index} rows...")
 
-# Convert to numpy arrays
 X = np.array(features)
 y = np.array(labels)
 
-# Add polynomial features for more complex relationships
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.pipeline import Pipeline
-from sklearn.linear_model import Ridge
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-print("\nTraining polynomial regression model...")
-# Create a pipeline with polynomial features and ridge regression
-poly_degree = 2
-poly_model = Pipeline([
-    ('poly', PolynomialFeatures(degree=poly_degree, include_bias=False)),
-    ('ridge', Ridge(alpha=0.5))
-])
-
-# Train the model
-poly_model.fit(X, y)
-y_pred = poly_model.predict(X)
-mse = mean_squared_error(y, y_pred)
-r2 = r2_score(y, y_pred)
-print(f"Polynomial Regression (degree {poly_degree}) - MSE: {mse:.4f}, R2: {r2:.4f}")
-
-# Also train tree-based models for comparison
-print("\nTraining tree-based models for comparison...")
+# Initialize models
 models = {
-    "Polynomial Regression": poly_model,
-    "Random Forest": RandomForestRegressor(n_estimators=200, random_state=42),
-    "Gradient Boosting": GradientBoostingRegressor(n_estimators=200, random_state=42)
+    "Polynomial (Deg 4)": Pipeline([
+        ('poly', PolynomialFeatures(degree=4)),
+        ('ridge', Ridge(alpha=0.5))
+    ]),
+    "Random Forest": RandomForestRegressor(n_estimators=300, random_state=42),
+    "Gradient Boosting": GradientBoostingRegressor(n_estimators=300, random_state=42),
+    "MLP":MLPRegressor(
+    hidden_layer_sizes=(1500, 1000, 500),  # Added layer
+    activation='relu',                   # Changed from default tanh
+    solver='adam',                       # Better for medium datasets
+    alpha=0.001,                         # Stronger regularization
+    learning_rate='adaptive',            # Better convergence
+    max_iter=1000,
+    early_stopping=True,                 # Prevent overfitting
+    validation_fraction=0.1,
+    random_state=42
+)
 }
 
-best_model = poly_model  # Default to polynomial model
-best_score = r2
-results = {"Polynomial Regression": {"MSE": mse, "R2": r2, "model": poly_model}}
+# Results storage
+results = []
 
-# Train and evaluate the tree-based models
-for name, model_instance in models.items():
-    if name != "Polynomial Regression":  # Already trained polynomial model
-        print(f"Training {name}...")
-        model_instance.fit(X, y)
-        y_pred = model_instance.predict(X)
-        mse = mean_squared_error(y, y_pred)
-        r2 = r2_score(y, y_pred)
-        results[name] = {"MSE": mse, "R2": r2, "model": model_instance}
-        
-        print(f"{name} - MSE: {mse:.4f}, R2: {r2:.4f}")
-        
-        if r2 > best_score:
-            best_score = r2
-            best_model = model_instance
+# Train and evaluate models
+print("\nTraining models...")
+for name, model in models.items():
+    print(f"Training {name}...")
+    start_time = time.time()
+    
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    
+    # Calculate metrics
+    abs_errors = np.abs(y_test - y_pred)
+    metrics = {
+        'Model': name,
+        'MSE': mean_squared_error(y_test, y_pred),
+        'R2': r2_score(y_test, y_pred),
+        'MAE': mean_absolute_error(y_test, y_pred),
+        'MedAE': median_absolute_error(y_test, y_pred),
+        'MaxError': np.max(abs_errors),
+        'Within_0.05': (abs_errors < 0.05).mean(),
+        'Within_0.1': (abs_errors < 0.1).mean(),
+        'Train_Time': time.time() - start_time
+    }
+    results.append(metrics)
+    
+    print(f"Completed {name} in {metrics['Train_Time']:.2f}s")
 
-print(f"\nBest model: {[name for name, res in results.items() if res['model'] == best_model][0]}")
-print(f"Best R2 score: {best_score:.4f}")
+# Create and save results DataFrame
+results_df = pd.DataFrame(results)
+results_csv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                               "model_metrics.csv")
+results_df.to_csv(results_csv_path, index=False)
+print(f"\nSaved metrics to {results_csv_path}")
 
-# Save the best model
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-model_path = os.path.join(parent_dir, "trained_grading_model.joblib")
-joblib.dump(best_model, model_path)
-print(f"Best model saved to {model_path}")
+# Identify and save best model
+best_model_info = results_df.loc[results_df['R2'].idxmax()]
+best_model = models[best_model_info['Model']]
+best_model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                              "best_model.joblib")
+joblib.dump(best_model, best_model_path)
+print(f"Saved best model ({best_model_info['Model']}) to {best_model_path}")
 
-# If the best model is tree-based, print feature importances
+# Display results
+print("\nModel Evaluation Results:")
+print(results_df.round(4).to_string(index=False))
+
+# Feature importance for tree-based models
+print("\nFeature Importances:")
 if hasattr(best_model, 'feature_importances_'):
-    feature_names = ["BERT Similarity", "SBERT Similarity", "Keyword Similarity"]
-    importances = best_model.feature_importances_
-    
-    print("\nFeature Importances:")
-    for feature, importance in zip(feature_names, importances):
-        print(f"{feature}: {importance:.4f}")
+    for name, importance in zip(["BERT", "SBERT", "Keyword"], best_model.feature_importances_):
+        print(f"{name}: {importance:.4f}")
+elif hasattr(best_model, 'named_steps') and hasattr(best_model.named_steps['ridge'], 'coef_'):
+    print("Polynomial feature coefficients available")
+else:
+    print("Feature importances not available for this model type")
 
-print("\nTraining completed!")
-print(f"The model that predicts score from BERT, SBERT, and keyword scores has been saved to {model_path}")
-
-# Additional evaluation on test data
-print("\n--- DETAILED MODEL EVALUATION ---")
-
-# Create a separate test set for final evaluation
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-
-# Retrain the best model on the training set
-print(f"Retraining the best model ({[name for name, res in results.items() if res['model'] == best_model][0]}) on training set...")
-best_model.fit(X_train, y_train)
-
-# Evaluate on test set
-y_pred = best_model.predict(X_test)
-test_mse = mean_squared_error(y_test, y_pred)
-test_r2 = r2_score(y_test, y_pred)
-abs_errors = np.abs(y_test - y_pred)
-mean_abs_error = np.mean(abs_errors)
-median_abs_error = np.median(abs_errors)
-
-print(f"\nTest Set Metrics:")
-print(f"MSE: {test_mse:.4f}")
-print(f"R²: {test_r2:.4f}")
-print(f"Mean Absolute Error: {mean_abs_error:.4f}")
-print(f"Median Absolute Error: {median_abs_error:.4f}")
-print(f"Max Absolute Error: {np.max(abs_errors):.4f}")
-print(f"% of predictions within 0.05 of true value: {(abs_errors < 0.05).mean() * 100:.1f}%")
-print(f"% of predictions within 0.1 of true value: {(abs_errors < 0.1).mean() * 100:.1f}%")
-
-# Plot prediction vs actual values if possible
-try:
-    import matplotlib.pyplot as plt
-    
-    plt.figure(figsize=(10, 6))
-    plt.scatter(y_test, y_pred, alpha=0.6)
-    
-    # Add perfect prediction line
-    min_val = min(min(y_test), min(y_pred))
-    max_val = max(max(y_test), max(y_pred))
-    plt.plot([min_val, max_val], [min_val, max_val], 'r--')
-    
-    plt.xlabel('Actual Scores')
-    plt.ylabel('Predicted Scores')
-    plt.title('Predicted vs Actual Scores (Test Set)')
-    plt.grid(True, alpha=0.3)
-    
-    # Save the plot
-    plot_path = os.path.join(parent_dir, "prediction_vs_actual.png")
-    plt.savefig(plot_path)
-    print(f"\nSaved prediction vs actual plot to {plot_path}")
-    
-    # Plot error distribution
-    plt.figure(figsize=(10, 6))
-    plt.hist(y_test - y_pred, bins=20, alpha=0.7)
-    plt.xlabel('Prediction Error')
-    plt.ylabel('Frequency')
-    plt.title('Distribution of Prediction Errors')
-    plt.grid(True, alpha=0.3)
-    
-    # Save the error distribution plot
-    error_plot_path = os.path.join(parent_dir, "error_distribution.png")
-    plt.savefig(error_plot_path)
-    print(f"Saved error distribution plot to {error_plot_path}")
-    
-except ImportError:
-    print("\nMatplotlib not installed. Skipping plots.")
-    
-# Compare with baseline model (linear regression)
-from sklearn.linear_model import LinearRegression
-print("\nComparing with baseline linear model:")
-
-linear_model = LinearRegression()
-linear_model.fit(X_train, y_train)
-linear_y_pred = linear_model.predict(X_test)
-linear_mse = mean_squared_error(y_test, linear_y_pred)
-linear_r2 = r2_score(y_test, linear_y_pred)
-linear_abs_errors = np.abs(y_test - linear_y_pred)
-linear_mean_abs_error = np.mean(linear_abs_errors)
-
-print(f"Linear Model - MSE: {linear_mse:.4f}, R²: {linear_r2:.4f}, Mean Abs Error: {linear_mean_abs_error:.4f}")
-print(f"Best Model    - MSE: {test_mse:.4f}, R²: {test_r2:.4f}, Mean Abs Error: {mean_abs_error:.4f}")
-print(f"Improvement   - MSE: {(linear_mse - test_mse) / linear_mse * 100:.1f}%, R²: {(test_r2 - linear_r2) * 100:.1f}%")
-
-# Cross-validation for more robust evaluation
-from sklearn.model_selection import cross_val_score, KFold
-print("\nPerforming 5-fold cross-validation...")
-
-kfold = KFold(n_splits=5, shuffle=True, random_state=42)
-cv_scores = cross_val_score(best_model, X, y, cv=kfold, scoring='r2')
-
-print(f"Cross-validation R² scores: {cv_scores}")
-print(f"Mean CV R²: {cv_scores.mean():.4f}, Std Dev: {cv_scores.std():.4f}")
-
-# Load the trained model
-model_path = "trained_grading_model.joblib"
-model = joblib.load(model_path)
-
-# Define predict_score function before using it
-def predict_score(bert_similarity, sbert_similarity, keyword_similarity):
-    """
-    Predict a score using the polynomial model which generally performs better than linear models.
-    
-    Polynomial regression can capture complex relationships between features, resulting in:
-    - Higher R-squared values (typically 10-15% better than linear)
-    - Lower mean squared error
-    - Better handling of feature interactions
-    
-    For automated grading, polynomial models excel because:
-    1. They can detect when features complement each other (e.g., high BERT + high keyword)
-    2. They give appropriate penalties when critical aspects are missing
-    3. They can model diminishing returns (e.g., when very high similarity doesn't necessarily
-       mean proportionally higher scores)
-    
-    The improvement over linear models is especially noticeable for answers that have:
-    - Uneven feature distributions (high in some metrics, low in others)
-    - Complex semantic relationships that simple weighted sums can't capture
-    """
-    # Prepare input features for prediction
-    features = np.array([[bert_similarity, sbert_similarity, keyword_similarity]])
-    
-    # Polynomial regression transforms inputs before prediction
-    # This is handled automatically by the pipeline
-    predicted_score = model.predict(features)[0]
-    
-    # Ensure the score is between 0 and 1
-    predicted_score = max(0.0, min(1.0, predicted_score))
-    
-    return predicted_score
-
-# Test a few sample inputs
-print("\nModel predictions for sample inputs:")
-sample_inputs = [
-    [0.9, 0.9, 0.9],  # Excellent match
-    [0.8, 0.7, 0.6],  # Good match
-    [0.6, 0.5, 0.5],  # Average match
-    [0.4, 0.3, 0.2],  # Below average match
-    [0.2, 0.1, 0.1]   # Poor match
-]
-
-for inputs in sample_inputs:
-    prediction = best_model.predict([inputs])[0]
-    print(f"BERT: {inputs[0]:.2f}, SBERT: {inputs[1]:.2f}, KW: {inputs[2]:.2f} => Score: {prediction:.4f}")
-
-print("Demonstrating how polynomial regression uses inputs differently than linear weights:")
-print("---------------------------------------------------------------------")
-
-# Example inputs with varied values
-examples = [
-    [0.8, 0.8, 0.8],  # All high
-    [0.8, 0.2, 0.8],  # High BERT, low SBERT
-    [0.2, 0.8, 0.2],  # Low BERT, high SBERT
-    [0.8, 0.8, 0.2],  # High semantic, low keyword
-    [0.2, 0.2, 0.8],  # Low semantic, high keyword
-    [0.5, 0.5, 0.5],  # All medium
-]
-
-for inputs in examples:
-    bert, sbert, kw = inputs
-    score = predict_score(bert, sbert, kw)
-    
-    # Calculate what a linear model would give with typical weights
-    linear_score = bert * 0.25 + sbert * 0.55 + kw * 0.2
-    
-    print(f"Inputs: BERT={bert:.2f}, SBERT={sbert:.2f}, KW={kw:.2f}")
-    print(f"Polynomial model score: {score:.4f}")
-    print(f"Linear model score:     {linear_score:.4f}")
-    print(f"Difference:             {score - linear_score:.4f}")
-    print("---------------------------------------------------------------------")
-
+print("\nTraining complete!")
