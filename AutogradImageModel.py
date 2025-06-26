@@ -1,25 +1,21 @@
 import gradio as gr
-from ollama import chat
 import os
-import nltk
-from nltk.corpus import stopwords
-import string
-import re
 import joblib
 import numpy as np
 import torch
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from ollama import chat
 
 # Load the no-keywords grading model
-model_path = "random_forest_grading_model_no_keywords.joblib"
-if os.path.exists(model_path):
-    grading_model = joblib.load(model_path)
-    print("Loaded no-keywords grading model.")
+no_keyword_model_path = os.path.join(os.path.dirname(__file__), "random_forest_grading_model_no_keywords.joblib")
+if os.path.exists(no_keyword_model_path):
+    rf_model_no_keywords = joblib.load(no_keyword_model_path)
+    print("Loaded Random Forest grading model (no keywords)")
 else:
-    grading_model = None
-    print("Warning: No-keywords grading model not found.")
+    print(f"Warning: No-keyword model not found at {no_keyword_model_path}")
+    rf_model_no_keywords = None
 
 # Initialize NLP models for grading
 try:
@@ -41,7 +37,7 @@ def get_bert_embedding(text):
     embeddings = outputs.last_hidden_state[:, 0, :].numpy()
     return embeddings
 
-def calculate_bert_similarity(student_answer, reference_answer):
+def calculate_similarity(student_answer, reference_answer):
     """Calculate BERT-based similarity between two texts."""
     embedding1 = get_bert_embedding(student_answer)
     embedding2 = get_bert_embedding(reference_answer)
@@ -59,175 +55,208 @@ def calculate_sbert_similarity(student_answer, reference_answer):
     sim = cosine_similarity([emb1], [emb2])[0][0]
     return sim
 
-def grade_answer(student_answer, reference_answer):
-    """Grade student answer using the no-keywords model."""
-    if not grading_model or not student_answer.strip() or not reference_answer.strip():
-        return 0.0, "Grading unavailable"
+def predict_score_no_keywords(bert_similarity, sbert_similarity):
+    """Predict score using the trained Random Forest model (no keywords)"""
+    if rf_model_no_keywords is None:
+        return 50.0  # Default score if model not loaded
     
-    try:
-        # Calculate features (only BERT and SBERT similarities)
-        bert_sim = calculate_bert_similarity(student_answer, reference_answer)
-        sbert_sim = calculate_sbert_similarity(student_answer, reference_answer)
-        
-        # Prepare features for prediction
-        features = np.array([[bert_sim, sbert_sim]])
-        
-        # Predict score
-        predicted_score = grading_model.predict(features)[0]
-        predicted_score = max(0, min(100, predicted_score))  # Clamp between 0-100
-        
-        return predicted_score, f"BERT Similarity: {bert_sim:.3f}, SBERT Similarity: {sbert_sim:.3f}"
-    except Exception as e:
-        return 0.0, f"Grading error: {str(e)}"
+    features = np.array([[bert_similarity, sbert_similarity]])
+    predicted_score = rf_model_no_keywords.predict(features)[0]
+    
+    # Convert from 0-1 range to 0-100 range
+    predicted_score = predicted_score * 100
+    
+    # Ensure score is between 0 and 100
+    return max(0.0, min(100.0, predicted_score))
 
-# Function to analyze each image
-def analyze_single_image(image, diagram_type):
-    if image is None:
-        return "Please provide an image."
-
-    # If image is a file path, open and read as bytes
-    if isinstance(image, str):
-        with open(image, 'rb') as img_file:
-            img_bytes = img_file.read()
+def score_to_grade(score, thresholds=None):
+    """Convert numerical score (0-100) to letter grade"""
+    if thresholds is None:
+        thresholds = {'A': 80, 'B': 60, 'C': 40, 'D': 20, 'F': 0}
+    
+    if score >= thresholds['A']:
+        return 'A'
+    elif score >= thresholds['B']:
+        return 'B'
+    elif score >= thresholds['C']:
+        return 'C'
+    elif score >= thresholds['D']:
+        return 'D'
     else:
-         img_bytes = image.read()
+        return 'F'
 
-    if diagram_type == "Flowchart":
-     adjusted_prompt = (
-        f"Examine the flowchart in this image and provide a single-paragraph explanation "
-        f"that identifies and describes every labeled process, symbol, decision point, and arrow. "
-        f"Detail the step-by-step flow of the logic or operation, including any loops or conditions. "
-        f"Accurately describe the flow direction, starting and ending points, and hierarchical structure "
-        f"as depicted, ensuring that all components are included in the output."
+def generate_feedback(score, grade):
+    """Generate feedback based on score and grade"""
+    feedback_map = {
+        'A': "Excellent answer! Your response demonstrates strong understanding.",
+        'B': "Good answer. Your response captures most key concepts well.",
+        'C': "Acceptable answer. Consider adding more details or key concepts.",
+        'D': "Below average answer. Review the material and try to include more relevant information.",
+        'F': "Your answer needs significant improvement. Please review the material thoroughly."
+    }
+    return feedback_map.get(grade, "Unable to generate feedback.")
+
+def analyze_both_images_for_comparison(student_image, reference_image):
+    """Analyze both images together using LLaVA to find common elements."""
+    if student_image is None or reference_image is None:
+        return "Please provide both images.", ""
+
+    # Load both images
+    if isinstance(student_image, str):
+        with open(student_image, 'rb') as img_file:
+            student_bytes = img_file.read()
+    else:
+        student_bytes = student_image.read()
+        
+    if isinstance(reference_image, str):
+        with open(reference_image, 'rb') as img_file:
+            reference_bytes = img_file.read()
+    else:
+        reference_bytes = reference_image.read()
+
+    # Comparison prompt for finding matching elements
+    comparison_prompt = (
+        "You are given two diagrams: the first is a student's answer and the second is the reference/correct answer.\n\n"
+        "TASK 1 - DESCRIBE REFERENCE IMAGE:\n"
+        "Look at the second image (reference/teacher's answer) and describe it completely.\n"
+        "Write each unique fact as a separate sentence. Avoid repeating the same information.\n"
+        "Example format:\n"
+        "- The diagram has a start oval labeled 'Begin'.\n"
+        "- There is a decision diamond labeled 'x > 5?'.\n"
+        "- The start oval connects to the decision diamond with an arrow.\n"
+        "- The decision diamond has two outputs: 'Yes' and 'No'.\n\n"
+        "TASK 2 - VERIFY EACH SENTENCE INDIVIDUALLY:\n"
+        "Now look at the first image (student's answer). For EACH INDIVIDUAL sentence you wrote about the reference, "
+        "carefully examine the student's image and ask these specific questions:\n\n"
+        "For each sentence, check:\n"
+        "1. Does this exact component exist in the student image?\n"
+        "2. Is the shape type correct (oval, rectangle, diamond, etc.)?\n"
+        "3. Is the text content at least 50% similar?\n"
+        "4. If it's a connection, does this connection actually exist?\n"
+        "5. Are the spatial relationships accurate?\n\n"
+        "STRICT VERIFICATION RULES:\n"
+        "- If ANY major element of the sentence is wrong, DO NOT include it\n"
+        "- If the component doesn't exist at all in student image, DO NOT include it\n"
+        "- If the shape is completely different (oval vs rectangle), DO NOT include it\n"
+        "- If the text is completely different, DO NOT include it\n"
+        "- If the connection doesn't exist, DO NOT include it\n"
+        "- Only include if the sentence is factually accurate about the student's diagram\n\n"
+        "Go through each sentence one by one and verify it individually against the student image.\n\n"
+        "Format your response exactly as:\n"
+        "REFERENCE DESCRIPTION:\n"
+        "[Each unique sentence on a new line]\n\n"
+        "MATCHING SENTENCES:\n"
+        "[Only sentences that are factually accurate about the student's image after individual verification]"
     )
-    elif diagram_type == "Block Diagram":
-        adjusted_prompt = (
-            f"Analyze the block diagram shown in this image. Describe in a single paragraph the function "
-            f"of each labeled block or module, the connections between them, and the directional flow of data or control. "
-            f"Explain the layout structure, hierarchy, and how each component interacts, ensuring all names, arrows, "
-            f"and symbols are transcribed precisely and organized clearly for comparison."
-        )
-    elif diagram_type == "Graph/Chart":
-        adjusted_prompt = (
-            f"Carefully examine the graph or chart in this image and provide a detailed single-paragraph description. "
-            f"Identify and transcribe all axis labels, titles, legends, and data values. For each bar/line/segment, specify "
-            f"its value and its associated category. Describe any trends, relationships, or comparisons depicted, and explain "
-            f"the chart's organization to enable accurate reproduction and evaluation."
-        )
-    elif diagram_type == "Table":
-        adjusted_prompt = (
-            f"Read the table in the image and generate a single-paragraph summary that transcribes the title, each header, "
-            f"and the content of every cell. For each data point, specify the corresponding row and column it belongs to. "
-            f"Ensure the structure and organization of the table is described objectively and precisely, preserving its hierarchy "
-            f"and labeling."
-        )
-    elif diagram_type == "ER Diagram":
-        adjusted_prompt = (
-            f"Examine the ER diagram and describe in a single paragraph all entities, attributes, and relationships. "
-            f"Identify primary/foreign keys, cardinalities, and connections. Specify the nature of relationships "
-            f"(one-to-many, many-to-many, etc.) and label each component as it appears, maintaining logical and spatial ordering "
-            f"for exact comparison."
-        )
-    elif diagram_type == "Network Diagram":
-        adjusted_prompt = (
-            f"Analyze the network diagram provided. Describe each labeled component such as nodes, devices, or layers. "
-            f"Explain the roles of each part, their connections, and the direction of data flow. Clearly interpret stack structures "
-            f"or hierarchies (e.g., OSI layers from top to bottom), providing one detailed paragraph that preserves positional "
-            f"and logical meaning."
-        )
-    elif diagram_type == "UML Diagram":
-        adjusted_prompt = (
-            f"Interpret the UML diagram in the image and describe in a single paragraph all classes, objects, methods, "
-            f"attributes, and relationships. Include visibility indicators (+/-/#), inheritance, associations, and multiplicities. "
-            f"Accurately represent each component's position, label, and connections to maintain the diagram's semantic structure."
-        )
-    elif diagram_type == "Circuit Diagram":
-        adjusted_prompt = (
-            f"Describe the circuit diagram in this image with a detailed single-paragraph explanation. Identify each component "
-            f"(resistors, capacitors, power sources, etc.), their values or labels, and explain the connections between them. "
-            f"Include direction of current flow, input/output terminals, and overall configuration clearly for objective interpretation."
-        )
-    elif diagram_type == "Scientific/Biological Diagram":
-        adjusted_prompt = (
-            f"Carefully analyze the labeled diagram and provide a single-paragraph explanation that describes each part, label, "
-            f"and its function. Maintain the layout order, direction, and grouping of components. Clearly state how each part relates "
-            f"to others within the system or structure, ensuring exact transcription and comprehensive description."
-        )
-    elif diagram_type == "Mind Map/Concept Map":
-        adjusted_prompt = (
-            f"Interpret the concept map in this image and generate a detailed single-paragraph explanation. Identify the central "
-            f"idea and each branching node, including their labels and the relationships or flows between them. Explain the hierarchical "
-            f"or logical order of concepts, ensuring all nodes and connections are covered systematically."
-        )
-    else:
-     adjusted_prompt = "Please select a diagram type."
-
+    
     response = chat(
-    model='llava',
-    messages=[{'role': 'user', 'content': adjusted_prompt, 'images': [img_bytes]}]
-)
-
-    return response['message']['content']
-
-# Main function to handle single image analysis and grading
-def main_process(single_img, diagram_type, reference_answer=None):
-    answer = analyze_single_image(single_img, diagram_type)
+        model='llava',
+        messages=[{'role': 'user', 'content': comparison_prompt, 'images': [student_bytes, reference_bytes]}]
+    )
     
-    # Add grading if reference answer is provided
-    if reference_answer and reference_answer.strip():
-        score, details = grade_answer(answer, reference_answer)
-        return answer, f"Score: {score:.1f}/100\nDetails: {details}"
+    full_analysis = response['message']['content']
+    
+    # Extract the two sections
+    lines = full_analysis.split('\n')
+    reference_desc = ""
+    student_matching = ""
+    current_section = None
+    
+    ref_sentences = set()
+    matching_sentences = set()
+    
+    for line in lines:
+        line = line.strip()
+        if "REFERENCE DESCRIPTION:" in line:
+            current_section = "ref"
+            continue
+        elif "MATCHING SENTENCES:" in line:
+            current_section = "student"
+            continue
+        elif current_section == "ref" and line and line not in ref_sentences:
+            ref_sentences.add(line)
+            reference_desc += line + "\n"
+        elif current_section == "student" and line and line not in matching_sentences:
+            matching_sentences.add(line)
+            student_matching += line + "\n"
+    
+    return reference_desc.strip(), student_matching.strip()
+
+def grade_image_no_keywords(student_answer, reference_answers, thresholds=None):
+    """Grade image answer using Random Forest model without keywords"""
+    # Calculate similarities
+    best_bert_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
+    best_sbert_similarity = max(calculate_sbert_similarity(student_answer, ref) for ref in reference_answers)
+    
+    # Always use Random Forest model for prediction
+    predicted_score = predict_score_no_keywords(best_bert_similarity, best_sbert_similarity)
+    
+    # Ensure score is between 0 and 100
+    predicted_score = max(0.0, min(100.0, predicted_score))
+    
+    # Convert to grade
+    grade = score_to_grade(predicted_score, thresholds)
+    
+    return {
+        'semantic_similarity': best_bert_similarity,
+        'sbert_similarity': best_sbert_similarity,
+        'predicted_score': predicted_score,
+        'grade': grade,
+        'feedback': generate_feedback(predicted_score, grade)
+    }
+
+def diagram_grader(student_diagram, reference_diagram):
+    """Main diagram grading function"""
+    diagram_thresholds = {'A': 80, 'B': 60, 'C': 40, 'D': 20, 'F': 0}
+    
+    if student_diagram is not None and reference_diagram is not None:
+        # Analyze both images together for comparison
+        reference_desc, matching_sentences = analyze_both_images_for_comparison(student_diagram, reference_diagram)
+        
+        # Use the matching sentences for grading (this represents what the student got right)
+        grade = grade_image_no_keywords(matching_sentences, [reference_desc], diagram_thresholds)
+        
+        # Truncate long descriptions to prevent HTTP errors
+        ref_display = reference_desc[:500] + "..." if len(reference_desc) > 500 else reference_desc
+        match_display = matching_sentences[:500] + "..." if len(matching_sentences) > 500 else matching_sentences
+        
+        diagram_grade_result = (
+            f"**Diagram Grading (Random Forest Model - No Keywords)**\n"
+            f"Semantic Similarity (BERT): {grade['semantic_similarity']:.4f}\n"
+            f"Semantic Similarity (SBERT): {grade['sbert_similarity']:.4f}\n"
+            f"Predicted Score: {grade['predicted_score']:.2f}/100\n"
+            f"Grade: {grade['grade']}\n"
+            f"Feedback: {grade['feedback']}\n\n"
+            f"**Reference Answer (Complete Description):**\n{ref_display}\n\n"
+            f"**What Student Got Correct (Matching Elements):**\n{match_display}"
+        )
+    elif student_diagram is not None:
+        diagram_grade_result = "Student diagram provided, but no reference diagram for grading."
+    elif reference_diagram is not None:
+        diagram_grade_result = "Reference diagram provided, but no student diagram for grading."
     else:
-        return answer, "No reference answer provided for grading"
+        diagram_grade_result = "No diagram or reference provided."
 
-# Main function to handle single image analysis
-def main_process(single_img, diagram_type):
-    answer = analyze_single_image(single_img, diagram_type)
-    return answer
+    return diagram_grade_result
 
-# Gradio UI
-with gr.Blocks(title="Diagram Analysis Tool") as demo:
-    # Inline CSS for Gradio UI
-    gr.HTML("""
-    <style>
-    /* Example custom styles, adjust as needed */
-    .gr-button { font-weight: bold; }
-    .gr-textbox textarea { font-size: 1.05em; }
-    .gr-markdown h1, .gr-markdown h2 { color: #2d3748; }
-    </style>
-    """)
-    gr.Markdown("# Diagram Analysis with Auto-Grading")
-    gr.Markdown("Upload a diagram image, select the diagram type, and optionally provide a reference answer for auto-grading.")
+# --- Gradio UI ---
+with gr.Blocks(title="Diagram Grading Tool") as demo:
+    gr.Markdown("# Diagram Grading Tool")
+    gr.Markdown("**Upload student diagram and reference diagram for auto-grading using Random Forest model (no keywords).**")
 
-    with gr.Row():
-        single_img = gr.Image(type="filepath", label="Upload Diagram Image")
-    
-    diagram_type = gr.Radio(
-        choices=[
-            "Flowchart", "Block Diagram", "Graph/Chart", "Table",
-            "ER Diagram", "Network Diagram", "UML Diagram", 
-            "Circuit Diagram", "Scientific/Biological Diagram", "Mind Map/Concept Map"
-        ],
-        value="Flowchart",
-        label="Select Diagram Type"
-    )
-    
-    reference_answer = gr.Textbox(
-        label="Reference Answer (Optional - for auto-grading)", 
-        placeholder="Enter the expected/correct answer to enable auto-grading...",
-        lines=4
-    )
-    
-    analyze_btn = gr.Button("Analyze Image", variant="primary")
+    with gr.Tab("Diagram Grading"):
+        with gr.Row():
+            student_diagram = gr.Image(type="filepath", label="Student Diagram")
+            reference_diagram = gr.Image(type="filepath", label="Reference Diagram")
 
-    answer_box = gr.Textbox(label="Diagram Analysis", interactive=False, lines=8)
-    grading_box = gr.Textbox(label="Auto-Grading Results", interactive=False, lines=3)
+    gr.Markdown("## Grade")
+    grade_btn = gr.Button("Grade Diagram", variant="primary")
+    diagram_grade_result = gr.Textbox(label="Diagram Grading Result", interactive=False, lines=12)
 
-    # --- Event handlers ---
-    analyze_btn.click(
-        main_process,
-        inputs=[single_img, diagram_type, reference_answer],
-        outputs=[answer_box, grading_box]
+    grade_btn.click(
+        diagram_grader,
+        inputs=[student_diagram, reference_diagram],
+        outputs=[diagram_grade_result]
     )
 
 if __name__ == "__main__":

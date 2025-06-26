@@ -551,18 +551,3 @@ if __name__ == "__main__":
         ],
         outputs=[text_grade_result, diagram_grade_result]
     )
-
-
-if __name__ == "__main__":
-    demo.launch()
-    grade_btn.click(
-        combined_grader,
-        inputs=[
-            student_text, student_diagram,
-            reference_text, reference_diagram, priority_keywords_text
-        ],
-        outputs=[text_grade_result, diagram_grade_result]
-    )
-
-
-
