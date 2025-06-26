@@ -77,19 +77,11 @@ You're now ready to go! 🚀
 ```bash
 python AutogradImageModel.py
 ```
-*After running, you'll get a local URL in the terminal like:*
-```
-* Running on local URL:  http://127.0.0.1:7861
-```
 
 ## 📝 Run Text Model
 
 ```bash
 python AutogradTextModel.py
-```
-*After running, you'll get a local URL in the terminal like:*
-```
-* Running on local URL:  http://127.0.0.1:7861
 ```
 
 ## 🔀 Run Combined Model
@@ -97,7 +89,15 @@ python AutogradTextModel.py
 ```bash
 python Combined.py
 ```
-*After running, you'll get a local URL in the terminal like:*
+
+*After running any of the models, you'll get a local URL in the terminal like:*
+* Running on local URL:  http://127.0.0.1:7861
+
+*Go to this link in your browser to access the implementation.*
+
+## Demo
+
+**Demo currently unavailable.**
 ```
 * Running on local URL:  http://127.0.0.1:7861
 ```
