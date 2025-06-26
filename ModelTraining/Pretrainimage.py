@@ -45,7 +45,7 @@ def calculate_sbert_similarity(student_answer, reference_answer):
 
 # Load data
 print("Loading data...")
-csv_file_path = r"ModelTraining\AutoGradeAI_enhanced_dataset2_inflated.csv"
+csv_file_path = r"ModelTraining\AutoGradeAI_enhanced_dataset2.csv"
 df = pd.read_csv(csv_file_path)
 
 # Feature extraction using only BERT and SBERT similarities
