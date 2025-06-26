@@ -342,7 +342,7 @@ def parse_priority_keywords(priority_keywords_text):
     return priority_keywords
 
 def analyze_both_images_for_comparison(student_image, reference_image):
-    """Analyze both images together using LLaVA to find common elements."""
+    """Analyze both images separately using a common prompt."""
     if student_image is None or reference_image is None:
         return "Please provide both images.", ""
 
@@ -359,74 +359,48 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     else:
         reference_bytes = reference_image.read()
 
-    # Modified prompt to thoroughly check each sentence individually
-    comparison_prompt = (
-        "You are given two diagrams: the first is a student's answer and the second is the reference/correct answer.\n\n"
-        "TASK 1 - DESCRIBE REFERENCE IMAGE:\n"
-        "Look at the second image (reference/teacher's answer) and describe it completely.\n"
+    # Common prompt for analyzing diagrams
+    common_prompt = (
+        "You are analyzing a diagram.\n\n"
+        "TASK: DESCRIBE THIS DIAGRAM COMPLETELY\n"
+        "Look at this diagram and describe it completely and systematically.\n"
         "Write each unique fact as a separate sentence. Avoid repeating the same information.\n"
+        "Be very specific about shapes, labels, connections, and spatial relationships.\n\n"
         "Example format:\n"
         "- The diagram has a start oval labeled 'Begin'.\n"
         "- There is a decision diamond labeled 'x > 5?'.\n"
         "- The start oval connects to the decision diamond with an arrow.\n"
         "- The decision diamond has two outputs: 'Yes' and 'No'.\n\n"
-        "TASK 2 - VERIFY EACH SENTENCE INDIVIDUALLY:\n"
-        "Now look at the first image (student's answer). For EACH INDIVIDUAL sentence you wrote about the reference, "
-        "carefully examine the student's image and ask these specific questions:\n\n"
-        "For each sentence, check:\n"
-        "1. Does this exact component exist in the student image?\n"
-        "2. Is the shape type correct (oval, rectangle, diamond, etc.)?\n"
-        "3. Is the text content at least 50% similar?\n"
-        "4. If it's a connection, does this connection actually exist?\n"
-        "5. Are the spatial relationships accurate?\n\n"
-        "STRICT VERIFICATION RULES:\n"
-        "- If ANY major element of the sentence is wrong, DO NOT include it\n"
-        "- If the component doesn't exist at all in student image, DO NOT include it\n"
-        "- If the shape is completely different (oval vs rectangle), DO NOT include it\n"
-        "- If the text is completely different, DO NOT include it\n"
-        "- If the connection doesn't exist, DO NOT include it\n"
-        "- Only include if the sentence is factually accurate about the student's diagram\n\n"
-        "Go through each sentence one by one and verify it individually against the student image.\n\n"
-        "Format your response exactly as:\n"
-        "REFERENCE DESCRIPTION:\n"
-        "[Each unique sentence on a new line]\n\n"
-        "MATCHING SENTENCES:\n"
-        "[Only sentences that are factually accurate about the student's image after individual verification]"
+        "Describe every component, label, and connection you see."
     )
-    
-    response = chat(
+
+    # Analyze the reference image
+    reference_response = chat(
         model='llava',
-        messages=[{'role': 'user', 'content': comparison_prompt, 'images': [student_bytes, reference_bytes]}]
+        messages=[{'role': 'user', 'content': common_prompt, 'images': [reference_bytes]}],
+        options={
+        'temperature': 0.0,      # No randomness in sampling
+        'top_p': 0.0,            # No nucleus sampling
+        'top_k': 1,              # Greedy decoding
+        'do_sample': False       # Use deterministic decoding
+        }
     )
-    
-    full_analysis = response['message']['content']
-    
-    # Extract the two sections and remove duplicates
-    lines = full_analysis.split('\n')
-    reference_desc = ""
-    student_matching = ""
-    current_section = None
-    
-    # Use sets to track seen sentences and avoid duplicates
-    ref_sentences = set()
-    matching_sentences = set()
-    
-    for line in lines:
-        line = line.strip()
-        if "REFERENCE DESCRIPTION:" in line:
-            current_section = "ref"
-            continue
-        elif "MATCHING SENTENCES:" in line:
-            current_section = "student"
-            continue
-        elif current_section == "ref" and line and line not in ref_sentences:
-            ref_sentences.add(line)
-            reference_desc += line + "\n"
-        elif current_section == "student" and line and line not in matching_sentences:
-            matching_sentences.add(line)
-            student_matching += line + "\n"
-    
-    return reference_desc.strip(), student_matching.strip()
+    reference_description = reference_response['message']['content']
+
+    # Analyze the student image
+    student_response = chat(
+        model='llava',
+        messages=[{'role': 'user', 'content': common_prompt, 'images': [student_bytes]}],
+        options={
+        'temperature': 0.0,      # No randomness in sampling
+        'top_p': 0.0,            # No nucleus sampling
+        'top_k': 1,              # Greedy decoding
+        'do_sample': False       # Use deterministic decoding
+        }
+    )
+    student_description = student_response['message']['content']
+
+    return reference_description.strip(), student_description.strip()
 
 # --- Main combined grading logic ---
 def combined_grader(
@@ -466,14 +440,14 @@ def combined_grader(
     diagram_grade_result = ""
     if student_diagram is not None and reference_diagram is not None:
         # Analyze both images together for comparison
-        reference_desc, matching_sentences = analyze_both_images_for_comparison(student_diagram, reference_diagram)
+        reference_desc, student_desc = analyze_both_images_for_comparison(student_diagram, reference_diagram)
         
-        # Use the matching sentences for grading (this represents what the student got right)
-        grade = grade_image_no_keywords(matching_sentences, [reference_desc], diagram_thresholds)
+        # Use the student description for grading (this represents what the student provided)
+        grade = grade_image_no_keywords(student_desc, [reference_desc], diagram_thresholds)
         
         # Truncate long descriptions to prevent HTTP errors
         ref_display = reference_desc[:500] + "..." if len(reference_desc) > 500 else reference_desc
-        match_display = matching_sentences[:500] + "..." if len(matching_sentences) > 500 else matching_sentences
+        stud_display = student_desc[:500] + "..." if len(student_desc) > 500 else student_desc
         
         diagram_grade_result = (
             f"**Diagram Grading (Random Forest Model - No Keywords)**\n"
@@ -483,7 +457,7 @@ def combined_grader(
             f"Grade: {grade['grade']}\n"
             f"Feedback: {grade['feedback']}\n\n"
             f"**Reference Answer (Complete Description):**\n{ref_display}\n\n"
-            f"**What Student Got Correct (Matching Elements):**\n{match_display}"
+            f"**Student Answer (Provided Description):**\n{stud_display}"
         )
     elif student_diagram is not None:
         diagram_grade_result = "Student diagram provided, but no reference diagram for grading."
@@ -524,6 +498,32 @@ with gr.Blocks(title="Combined Text & Diagram Grading Tool") as demo:
 
     gr.Markdown("## Grade")
     grade_btn = gr.Button("Grade Both", variant="primary")
+    text_grade_result = gr.Textbox(label="Text Grading Result (With Keywords)", interactive=False, lines=8)
+    diagram_grade_result = gr.Textbox(label="Diagram Grading Result (No Keywords)", interactive=False, lines=8)
+
+    grade_btn.click(
+        combined_grader,
+        inputs=[
+            student_text, student_diagram,
+            reference_text, reference_diagram, priority_keywords_text
+        ],
+        outputs=[text_grade_result, diagram_grade_result]
+    )
+
+if __name__ == "__main__":
+    demo.launch()
+    grade_btn = gr.Button("Grade Both", variant="primary")
+    text_grade_result = gr.Textbox(label="Text Grading Result (With Keywords)", interactive=False, lines=8)
+    diagram_grade_result = gr.Textbox(label="Diagram Grading Result (No Keywords)", interactive=False, lines=8)
+
+    grade_btn.click(
+        combined_grader,
+        inputs=[
+            student_text, student_diagram,
+            reference_text, reference_diagram, priority_keywords_text
+        ],
+        outputs=[text_grade_result, diagram_grade_result]
+    )
     text_grade_result = gr.Textbox(label="Text Grading Result (With Keywords)", interactive=False, lines=8)
     diagram_grade_result = gr.Textbox(label="Diagram Grading Result (No Keywords)", interactive=False, lines=8)
 

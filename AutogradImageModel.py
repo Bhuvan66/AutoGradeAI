@@ -97,7 +97,7 @@ def generate_feedback(score, grade):
     return feedback_map.get(grade, "Unable to generate feedback.")
 
 def analyze_both_images_for_comparison(student_image, reference_image):
-    """Analyze both images together using LLaVA to find common elements."""
+    """Analyze both images separately using a common prompt."""
     if student_image is None or reference_image is None:
         return "Please provide both images.", ""
 
@@ -114,73 +114,48 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     else:
         reference_bytes = reference_image.read()
 
-    # Comparison prompt for finding matching elements
-    comparison_prompt = (
-        "You are given two diagrams: the first is a student's answer and the second is the reference/correct answer.\n\n"
-        "TASK 1 - DESCRIBE REFERENCE IMAGE:\n"
-        "Look at the second image (reference/teacher's answer) and describe it completely.\n"
+    # Common prompt for analyzing diagrams
+    common_prompt = (
+        "You are analyzing a diagram.\n\n"
+        "TASK: DESCRIBE THIS DIAGRAM COMPLETELY\n"
+        "Look at this diagram and describe it completely and systematically.\n"
         "Write each unique fact as a separate sentence. Avoid repeating the same information.\n"
+        "Be very specific about shapes, labels, connections, and spatial relationships.\n\n"
         "Example format:\n"
         "- The diagram has a start oval labeled 'Begin'.\n"
         "- There is a decision diamond labeled 'x > 5?'.\n"
         "- The start oval connects to the decision diamond with an arrow.\n"
         "- The decision diamond has two outputs: 'Yes' and 'No'.\n\n"
-        "TASK 2 - VERIFY EACH SENTENCE INDIVIDUALLY:\n"
-        "Now look at the first image (student's answer). For EACH INDIVIDUAL sentence you wrote about the reference, "
-        "carefully examine the student's image and ask these specific questions:\n\n"
-        "For each sentence, check:\n"
-        "1. Does this exact component exist in the student image?\n"
-        "2. Is the shape type correct (oval, rectangle, diamond, etc.)?\n"
-        "3. Is the text content at least 50% similar?\n"
-        "4. If it's a connection, does this connection actually exist?\n"
-        "5. Are the spatial relationships accurate?\n\n"
-        "STRICT VERIFICATION RULES:\n"
-        "- If ANY major element of the sentence is wrong, DO NOT include it\n"
-        "- If the component doesn't exist at all in student image, DO NOT include it\n"
-        "- If the shape is completely different (oval vs rectangle), DO NOT include it\n"
-        "- If the text is completely different, DO NOT include it\n"
-        "- If the connection doesn't exist, DO NOT include it\n"
-        "- Only include if the sentence is factually accurate about the student's diagram\n\n"
-        "Go through each sentence one by one and verify it individually against the student image.\n\n"
-        "Format your response exactly as:\n"
-        "REFERENCE DESCRIPTION:\n"
-        "[Each unique sentence on a new line]\n\n"
-        "MATCHING SENTENCES:\n"
-        "[Only sentences that are factually accurate about the student's image after individual verification]"
+        "Describe every component, label, and connection you see."
     )
-    
-    response = chat(
+
+    # Analyze the reference image
+    reference_response = chat(
         model='llava',
-        messages=[{'role': 'user', 'content': comparison_prompt, 'images': [student_bytes, reference_bytes]}]
+        messages=[{'role': 'user', 'content': common_prompt, 'images': [reference_bytes]}],
+        options={
+        'temperature': 0.0,      # No randomness in sampling
+        'top_p': 0.0,            # No nucleus sampling
+        'top_k': 1,              # Greedy decoding
+        'do_sample': False       # Use deterministic decoding
+        }
     )
-    
-    full_analysis = response['message']['content']
-    
-    # Extract the two sections
-    lines = full_analysis.split('\n')
-    reference_desc = ""
-    student_matching = ""
-    current_section = None
-    
-    ref_sentences = set()
-    matching_sentences = set()
-    
-    for line in lines:
-        line = line.strip()
-        if "REFERENCE DESCRIPTION:" in line:
-            current_section = "ref"
-            continue
-        elif "MATCHING SENTENCES:" in line:
-            current_section = "student"
-            continue
-        elif current_section == "ref" and line and line not in ref_sentences:
-            ref_sentences.add(line)
-            reference_desc += line + "\n"
-        elif current_section == "student" and line and line not in matching_sentences:
-            matching_sentences.add(line)
-            student_matching += line + "\n"
-    
-    return reference_desc.strip(), student_matching.strip()
+    reference_description = reference_response['message']['content']
+
+    # Analyze the student image
+    student_response = chat(
+        model='llava',
+        messages=[{'role': 'user', 'content': common_prompt, 'images': [student_bytes]}],
+        options={
+        'temperature': 0.0,      # No randomness in sampling
+        'top_p': 0.0,            # No nucleus sampling
+        'top_k': 1,              # Greedy decoding
+        'do_sample': False       # Use deterministic decoding
+        }
+    )
+    student_description = student_response['message']['content']
+
+    return reference_description.strip(), student_description.strip()
 
 def grade_image_no_keywords(student_answer, reference_answers, thresholds=None):
     """Grade image answer using Random Forest model without keywords"""
