@@ -75,22 +75,34 @@ You're now ready to go! 🚀
 ## 🖼️ Run Image Model
 
 ```bash
-python3 AutogradImageModel.py
+python AutogradImageModel.py
+```
+*After running, you'll get a local URL in the terminal like:*
+```
+* Running on local URL:  http://127.0.0.1:7861
 ```
 
 ## 📝 Run Text Model
 
 ```bash
-python3 AutogradTextModel.py
+python AutogradTextModel.py
+```
+*After running, you'll get a local URL in the terminal like:*
+```
+* Running on local URL:  http://127.0.0.1:7861
 ```
 
 ## 🔀 Run Combined Model
 
 ```bash
-python3 Combined.py
+python Combined.py
+```
+*After running, you'll get a local URL in the terminal like:*
+```
+* Running on local URL:  http://127.0.0.1:7861
 ```
 
 ## Demo
 
-Insert gif or link to demo
+**Demo currently unavailable.**
 
