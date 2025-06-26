@@ -14,7 +14,7 @@ import os
 import json
 import joblib
 
-nltk.download('punkt')
+
 nltk.download('stopwords')
 
 tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')

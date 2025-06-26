@@ -15,7 +15,6 @@ import yake
 from keybert import KeyBERT
 
 # Download required NLTK data
-nltk.download('punkt', quiet=True)
 nltk.download('stopwords', quiet=True)
 
 # Load both models
@@ -551,3 +550,4 @@ if __name__ == "__main__":
         ],
         outputs=[text_grade_result, diagram_grade_result]
     )
+    
