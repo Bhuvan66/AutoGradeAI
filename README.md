@@ -98,11 +98,5 @@ python Combined.py
 ## Demo
 
 **Demo currently unavailable.**
-```
-* Running on local URL:  http://127.0.0.1:7861
-```
 
-## Demo
-
-**Demo currently unavailable.**
 
