@@ -13,6 +13,7 @@ import nltk
 from nltk.corpus import stopwords
 import yake
 from keybert import KeyBERT
+import time  # Add time module for response time tracking
 
 # Download required NLTK data
 nltk.download('stopwords', quiet=True)
@@ -342,7 +343,7 @@ def parse_priority_keywords(priority_keywords_text):
     return priority_keywords
 
 def analyze_both_images_for_comparison(student_image, reference_image):
-    """Analyze both images separately using a common prompt."""
+    """Analyze both images separately using a strict, numbered format prompt."""
     if student_image is None or reference_image is None:
         return "Please provide both images.", ""
 
@@ -359,36 +360,44 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     else:
         reference_bytes = reference_image.read()
 
-    # Updated prompt for analyzing diagrams
-    common_prompt = (
-        "Analyze the provided diagram and describe it in approximately 100 words. Focus on identifying key components, shapes, labels, and connections. Mention the type of shapes (e.g., oval, rectangle, diamond) and any visible text or labels. Describe the relationships between components, including arrows, lines, or wires, and specify their direction or type. Summarize the logical flow or structure of the diagram, such as top-to-bottom or left-to-right. Be precise and avoid repeating information."
+    # Strict, numbered format prompt for analyzing diagrams
+    strict_prompt = (
+        "Explain the following diagram in detail, focusing on the key elements and their relationships. "
     )
 
     # Analyze the reference image
-    reference_response = chat(
-        model='llava',
-        messages=[{'role': 'user', 'content': common_prompt, 'images': [reference_bytes]}],
-        options={
-        'temperature': 0.0,      # No randomness in sampling
-        'top_p': 0.0,            # No nucleus sampling
-        'top_k': 1,              # Greedy decoding
-        'do_sample': False       # Use deterministic decoding
-        }
-    )
-    reference_description = reference_response['message']['content']
+    start_time = time.time()  # Start timing
+    try:
+        reference_response = chat(
+            model='llava',
+            messages=[{'role': 'user', 'content': strict_prompt, 'images': [reference_bytes]}],
+            options={
+                'temperature': 0.0,      # No randomness in sampling
+                'top_p': 0.0,            # No nucleus sampling
+                'top_k': 1,              # Greedy decoding
+                'do_sample': False,      # Use deterministic decoding
+            }
+        )
+        reference_description = reference_response['message']['content']
+    except Exception as e:
+        reference_description = "Error analyzing reference image."
 
     # Analyze the student image
-    student_response = chat(
-        model='llava',
-        messages=[{'role': 'user', 'content': common_prompt, 'images': [student_bytes]}],
-        options={
-        'temperature': 0.0,      # No randomness in sampling
-        'top_p': 0.0,            # No nucleus sampling
-        'top_k': 1,              # Greedy decoding
-        'do_sample': False       # Use deterministic decoding
-        }
-    )
-    student_description = student_response['message']['content']
+    start_time = time.time()  # Start timing
+    try:
+        student_response = chat(
+            model='llava',
+            messages=[{'role': 'user', 'content': strict_prompt, 'images': [student_bytes]}],
+            options={
+                'temperature': 0.0,      # No randomness in sampling
+                'top_p': 0.0,            # No nucleus sampling
+                'top_k': 1,              # Greedy decoding
+                'do_sample': False,      # Use deterministic decoding
+            }
+        )
+        student_description = student_response['message']['content']
+    except Exception as e:
+        student_description = "Error analyzing student image."
 
     return reference_description.strip(), student_description.strip()
 

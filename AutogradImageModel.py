@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from ollama import chat
+import time  # Add time module for response time tracking
 
 # Load the no-keywords grading model
 no_keyword_model_path = os.path.join(os.path.dirname(__file__), "random_forest_grading_model_no_keywords.joblib")
@@ -97,7 +98,7 @@ def generate_feedback(score, grade):
     return feedback_map.get(grade, "Unable to generate feedback.")
 
 def analyze_both_images_for_comparison(student_image, reference_image):
-    """Analyze both images separately using a common prompt."""
+    """Analyze both images separately using a strict, numbered format prompt."""
     if student_image is None or reference_image is None:
         return "Please provide both images.", ""
 
@@ -114,59 +115,58 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     else:
         reference_bytes = reference_image.read()
 
-    # Common prompt for analyzing diagrams
-    common_prompt = (
-        "You are analyzing a diagram.\n\n"
-        "TASK:\n"
-        "Describe this diagram completely and systematically.\n\n"
-        "Instructions:\n\n"
-        "Identify and label every distinct shape, symbol, or component.\n"
-        "Assign a unique number or letter to each component.\n"
-        "State the type of shape or symbol (e.g., oval, rectangle, diamond, resistor, node, cloud, etc.).\n"
-        "Include any visible text or labels exactly as written.\n"
-        "Describe all connections and relationships.\n"
-        "List all arrows, lines, or wires connecting components.\n"
-        "Specify the direction and type of connection (e.g., arrow, solid line, dotted line).\n"
-        "Use the assigned numbers/letters to refer to connected components.\n"
-        "Summarize the structure and logical flow.\n"
-        "Briefly explain how components are organized (e.g., top-to-bottom, left-to-right, hierarchical).\n"
-        "Describe the overall logic or flow if relevant (e.g., start to end, input to output).\n\n"
-        "Example Format:\n\n"
-        "Component 1: Oval labeled \"Start\".\n"
-        "Component 2: Rectangle labeled \"Process Step 1\".\n"
-        "Component 3: Diamond labeled \"Decision\".\n"
-        "Connection: Component 1 connects to Component 2 with an arrow.\n"
-        "Connection: Component 2 connects to Component 3 with an arrow.\n"
-        "Structure: The diagram flows from top to bottom, starting with Component 1, proceeding to Component 2, and then to Component 3.\n\n"
-        "Be precise, systematic, and avoid repeating information.\n\n"
-        "Now, describe this diagram following the instructions above.\n"
+    # Strict, numbered format prompt for analyzing diagrams
+    strict_prompt = (
+        "Explain the following diagram in detail, focusing on the key elements and their relationships. "
     )
 
     # Analyze the reference image
-    reference_response = chat(
-        model='llava',
-        messages=[{'role': 'user', 'content': common_prompt, 'images': [reference_bytes]}],
-        options={
-        'temperature': 0.0,      # No randomness in sampling
-        'top_p': 0.0,            # No nucleus sampling
-        'top_k': 1,              # Greedy decoding
-        'do_sample': False       # Use deterministic decoding
-        }
-    )
-    reference_description = reference_response['message']['content']
+    start_time = time.time()  # Start timing
+    print("Sending prompt for reference image analysis:")
+    print(strict_prompt)  # Log the prompt being sent
+    try:
+        reference_response = chat(
+            model='llava',
+            messages=[{'role': 'user', 'content': strict_prompt, 'images': [reference_bytes]}],
+            options={
+                'temperature': 0.0,      # No randomness in sampling
+                'top_p': 0.0,            # No nucleus sampling
+                'top_k': 1,              # Greedy decoding
+                'do_sample': False,      # Use deterministic decoding
+            }
+        )
+        reference_description = reference_response['message']['content']
+        print("Received response for reference image analysis:")
+        print(reference_description)  # Log the response received
+    except Exception as e:
+        print(f"Error analyzing reference image: {e}")
+        reference_description = "Error analyzing reference image."
+
+    print(f"Reference image analysis time: {time.time() - start_time:.2f} seconds")  # Log response time
 
     # Analyze the student image
-    student_response = chat(
-        model='llava',
-        messages=[{'role': 'user', 'content': common_prompt, 'images': [student_bytes]}],
-        options={
-        'temperature': 0.0,      # No randomness in sampling
-        'top_p': 0.0,            # No nucleus sampling
-        'top_k': 1,              # Greedy decoding
-        'do_sample': False       # Use deterministic decoding
-        }
-    )
-    student_description = student_response['message']['content']
+    start_time = time.time()  # Start timing
+    print("Sending prompt for student image analysis:")
+    print(strict_prompt)  # Log the prompt being sent
+    try:
+        student_response = chat(
+            model='llava',
+            messages=[{'role': 'user', 'content': strict_prompt, 'images': [student_bytes]}],
+            options={
+                'temperature': 0.0,      # No randomness in sampling
+                'top_p': 0.0,            # No nucleus sampling
+                'top_k': 1,              # Greedy decoding
+                'do_sample': False,      # Use deterministic decoding
+            }
+        )
+        student_description = student_response['message']['content']
+        print("Received response for student image analysis:")
+        print(student_description)  # Log the response received
+    except Exception as e:
+        print(f"Error analyzing student image: {e}")
+        student_description = "Error analyzing student image."
+
+    print(f"Student image analysis time: {time.time() - start_time:.2f} seconds")  # Log response time
 
     return reference_description.strip(), student_description.strip()
 
