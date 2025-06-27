@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 
-def inflate_ai_scores(input_file_path, output_file_path, inflation_rate=0.25):
+def inflate_ai_scores(input_file_path, output_file_path, inflation_rate=0.05):
     """
     Inflate AI scores by specified percentage while ensuring they don't exceed 100%
     

@@ -359,19 +359,9 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     else:
         reference_bytes = reference_image.read()
 
-    # Common prompt for analyzing diagrams
+    # Updated prompt for analyzing diagrams
     common_prompt = (
-        "You are analyzing a diagram.\n\n"
-        "TASK: DESCRIBE THIS DIAGRAM COMPLETELY\n"
-        "Look at this diagram and describe it completely and systematically.\n"
-        "Write each unique fact as a separate sentence. Avoid repeating the same information.\n"
-        "Be very specific about shapes, labels, connections, and spatial relationships.\n\n"
-        "Example format:\n"
-        "- The diagram has a start oval labeled 'Begin'.\n"
-        "- There is a decision diamond labeled 'x > 5?'.\n"
-        "- The start oval connects to the decision diamond with an arrow.\n"
-        "- The decision diamond has two outputs: 'Yes' and 'No'.\n\n"
-        "Describe every component, label, and connection you see."
+        "Analyze the provided diagram and describe it in approximately 100 words. Focus on identifying key components, shapes, labels, and connections. Mention the type of shapes (e.g., oval, rectangle, diamond) and any visible text or labels. Describe the relationships between components, including arrows, lines, or wires, and specify their direction or type. Summarize the logical flow or structure of the diagram, such as top-to-bottom or left-to-right. Be precise and avoid repeating information."
     )
 
     # Analyze the reference image
@@ -440,14 +430,14 @@ def combined_grader(
     diagram_grade_result = ""
     if student_diagram is not None and reference_diagram is not None:
         # Analyze both images together for comparison
-        reference_desc, student_desc = analyze_both_images_for_comparison(student_diagram, reference_diagram)
+        reference_desc, matching_sentences = analyze_both_images_for_comparison(student_diagram, reference_diagram)
         
-        # Use the student description for grading (this represents what the student provided)
-        grade = grade_image_no_keywords(student_desc, [reference_desc], diagram_thresholds)
+        # Use the matching sentences for grading (this represents what the student got right)
+        grade = grade_image_no_keywords(matching_sentences, [reference_desc], diagram_thresholds)
         
         # Truncate long descriptions to prevent HTTP errors
         ref_display = reference_desc[:500] + "..." if len(reference_desc) > 500 else reference_desc
-        stud_display = student_desc[:500] + "..." if len(student_desc) > 500 else student_desc
+        match_display = matching_sentences[:500] + "..." if len(matching_sentences) > 500 else matching_sentences
         
         diagram_grade_result = (
             f"**Diagram Grading (Random Forest Model - No Keywords)**\n"
@@ -457,7 +447,7 @@ def combined_grader(
             f"Grade: {grade['grade']}\n"
             f"Feedback: {grade['feedback']}\n\n"
             f"**Reference Answer (Complete Description):**\n{ref_display}\n\n"
-            f"**Student Answer (Provided Description):**\n{stud_display}"
+            f"**What Student Got Correct (Matching Elements):**\n{match_display}"
         )
     elif student_diagram is not None:
         diagram_grade_result = "Student diagram provided, but no reference diagram for grading."
@@ -550,4 +540,4 @@ if __name__ == "__main__":
         ],
         outputs=[text_grade_result, diagram_grade_result]
     )
-    
+
