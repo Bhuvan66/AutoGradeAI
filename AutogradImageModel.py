@@ -122,8 +122,6 @@ def analyze_both_images_for_comparison(student_image, reference_image):
 
     # Analyze the reference image
     start_time = time.time()  # Start timing
-    print("Sending prompt for reference image analysis:")
-    print(strict_prompt)  # Log the prompt being sent
     try:
         reference_response = chat(
             model='llava',
@@ -136,18 +134,11 @@ def analyze_both_images_for_comparison(student_image, reference_image):
             }
         )
         reference_description = reference_response['message']['content']
-        print("Received response for reference image analysis:")
-        print(reference_description)  # Log the response received
     except Exception as e:
-        print(f"Error analyzing reference image: {e}")
         reference_description = "Error analyzing reference image."
-
-    print(f"Reference image analysis time: {time.time() - start_time:.2f} seconds")  # Log response time
 
     # Analyze the student image
     start_time = time.time()  # Start timing
-    print("Sending prompt for student image analysis:")
-    print(strict_prompt)  # Log the prompt being sent
     try:
         student_response = chat(
             model='llava',
@@ -160,13 +151,8 @@ def analyze_both_images_for_comparison(student_image, reference_image):
             }
         )
         student_description = student_response['message']['content']
-        print("Received response for student image analysis:")
-        print(student_description)  # Log the response received
     except Exception as e:
-        print(f"Error analyzing student image: {e}")
         student_description = "Error analyzing student image."
-
-    print(f"Student image analysis time: {time.time() - start_time:.2f} seconds")  # Log response time
 
     return reference_description.strip(), student_description.strip()
 
