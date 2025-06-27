@@ -121,7 +121,7 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     )
 
     # Analyze the reference image
-    start_time = time.time()  # Start timing
+
     try:
         reference_response = chat(
             model='llava',
@@ -138,7 +138,7 @@ def analyze_both_images_for_comparison(student_image, reference_image):
         reference_description = "Error analyzing reference image."
 
     # Analyze the student image
-    start_time = time.time()  # Start timing
+
     try:
         student_response = chat(
             model='llava',
