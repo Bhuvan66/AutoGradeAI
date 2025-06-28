@@ -67,6 +67,23 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+## 🦙 Install Ollama (Required for Image/Combined Models)
+
+**Note:** If you want to run the Image Model (`AutogradImageModel.py`) or Combined Model (`Combined.py`), you must install Ollama and the LLaVA model.
+
+### Step 1: Install Ollama
+- Visit [https://ollama.com/download](https://ollama.com/download) and download Ollama for your operating system
+- Follow the installation instructions for your platform
+
+### Step 2: Pull LLaVA Model
+After installing Ollama, run the following command in your terminal:
+
+```bash
+ollama pull llava:latest
+```
+> **Note:** The LLaVA model is large (approximately 4–5 GB). Ensure you have sufficient disk space and a stable internet connection before downloading.
+**Important:** The Text Model (`AutogradTextModel.py`) does not require Ollama and can be run without it.
+
 ---
 
 You're now ready to go! 🚀
