@@ -207,37 +207,29 @@ def calculate_sbert_similarity(student_answer, reference_answer):
     return sim
 
 def predict_score_with_keywords(bert_similarity, sbert_similarity, keyword_similarity):
-    """Predict score using the trained Random Forest model (with keywords)"""
     if rf_model_keywords is None:
-        return 50.0  # Default score if model not loaded
+        return 0.0  # Default score if model not loaded
     
     features = np.array([[bert_similarity, sbert_similarity, keyword_similarity]])
-    predicted_score = rf_model_keywords.predict(features)[0]
-    
-    # Convert from 0-1 range to 0-100 range
-    predicted_score = predicted_score * 100
-    
+    predicted_score = (rf_model_keywords.predict(features)[0])*100
+
     # Ensure score is between 0 and 100
-    return max(0.0, min(100.0, predicted_score))
+    return predicted_score
 
 def predict_score_no_keywords(bert_similarity, sbert_similarity):
     """Predict score using the trained Random Forest model (no keywords)"""
     if rf_model_no_keywords is None:
-        return 50.0  # Default score if model not loaded
+        return 0.0  # Default score if model not loaded
     
     features = np.array([[bert_similarity, sbert_similarity]])
-    predicted_score = rf_model_no_keywords.predict(features)[0]
-    
-    # Convert from 0-1 range to 0-100 range
-    predicted_score = predicted_score * 100
+    predicted_score = (rf_model_no_keywords.predict(features)[0])*100
     
     # Ensure score is between 0 and 100
-    return max(0.0, min(100.0, predicted_score))
+    return predicted_score
 
-def score_to_grade(score, thresholds=None):
-    """Convert numerical score (0-100) to letter grade"""
-    if thresholds is None:
-        thresholds = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
+def score_to_grade(score):
+
+    thresholds = {'A': 80, 'B': 60, 'C': 40, 'D': 20, 'F': 0}
     
     if score >= thresholds['A']:
         return 'A'
@@ -261,7 +253,7 @@ def generate_feedback(score, grade):
     }
     return feedback_map.get(grade, "Unable to generate feedback.")
 
-def grade_text_with_keywords(student_answer, reference_answers, priority_keywords=None, thresholds=None):
+def grade_text_with_keywords(student_answer, reference_answers, priority_keywords=None):
     """Grade text answer using Random Forest model with keywords"""
     # Calculate similarities
     best_bert_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
@@ -275,7 +267,7 @@ def grade_text_with_keywords(student_answer, reference_answers, priority_keyword
     predicted_score = predict_score_with_keywords(best_bert_similarity, best_sbert_similarity, keyword_similarity)
     
     # Convert to grade
-    grade = score_to_grade(predicted_score, thresholds)
+    grade = score_to_grade(predicted_score)
 
     
     return {
@@ -290,7 +282,7 @@ def grade_text_with_keywords(student_answer, reference_answers, priority_keyword
         'feedback': generate_feedback(predicted_score, grade)
     }
 
-def grade_image_no_keywords(student_answer, reference_answers, thresholds=None):
+def grade_image_no_keywords(student_answer, reference_answers):
     """Grade image answer using Random Forest model without keywords"""
     # Calculate similarities
     best_bert_similarity = max(calculate_similarity(student_answer, ref) for ref in reference_answers)
@@ -299,11 +291,8 @@ def grade_image_no_keywords(student_answer, reference_answers, thresholds=None):
     # Always use Random Forest model for prediction
     predicted_score = predict_score_no_keywords(best_bert_similarity, best_sbert_similarity)
     
-    # Ensure score is between 0 and 100
-    predicted_score = max(0.0, min(100.0, predicted_score))
-    
     # Convert to grade
-    grade = score_to_grade(predicted_score, thresholds)
+    grade = score_to_grade(predicted_score)
     
     return {
         'semantic_similarity': best_bert_similarity,
@@ -348,20 +337,13 @@ def analyze_both_images_for_comparison(student_image, reference_image):
         return "Please provide both images.", ""
 
     # Load both images
-    if isinstance(student_image, str):
-        with open(student_image, 'rb') as img_file:
-            student_bytes = img_file.read()
-    else:
-        student_bytes = student_image.read()
-        
-    if isinstance(reference_image, str):
-        with open(reference_image, 'rb') as img_file:
-            reference_bytes = img_file.read()
-    else:
-        reference_bytes = reference_image.read()
+    with open(student_image, 'rb') as img_file:
+        student_bytes = img_file.read()
+    with open(reference_image, 'rb') as img_file:
+        reference_bytes = img_file.read()
 
     # Strict, numbered format prompt for analyzing diagrams
-    strict_prompt = (
+    prompt = (
         "Explain the following diagram in detail, focusing on the key elements and their relationships. "
     )
 
@@ -369,7 +351,7 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     try:
         reference_response = chat(
             model='llava',
-            messages=[{'role': 'user', 'content': strict_prompt, 'images': [reference_bytes]}],
+            messages=[{'role': 'user', 'content': prompt, 'images': [reference_bytes]}],
             options={
                 'temperature': 0.0,      # No randomness in sampling
                 'top_p': 0.0,            # No nucleus sampling
@@ -385,7 +367,7 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     try:
         student_response = chat(
             model='llava',
-            messages=[{'role': 'user', 'content': strict_prompt, 'images': [student_bytes]}],
+            messages=[{'role': 'user', 'content': prompt, 'images': [student_bytes]}],
             options={
                 'temperature': 0.0,      # No randomness in sampling
                 'top_p': 0.0,            # No nucleus sampling
@@ -401,13 +383,9 @@ def analyze_both_images_for_comparison(student_image, reference_image):
 
 # --- Main combined grading logic ---
 def combined_grader(
-    student_text, student_diagram,
-    reference_text, reference_diagram, priority_keywords_text
-):
-    # Text grading thresholds
-    text_thresholds = {'A': 90, 'B': 80, 'C': 65, 'D': 25, 'F': 0}
-    # Diagram grading thresholds (stricter)
-    diagram_thresholds = {'A': 80, 'B': 60, 'C': 40, 'D': 20, 'F': 0}
+                    student_text, student_diagram,
+                    reference_text, reference_diagram, priority_keywords_text
+                    ):
     
     # --- Text grading (with keywords) ---
     text_grade_result = ""
@@ -416,7 +394,7 @@ def combined_grader(
             ref_answers_list = [ans.strip() for ans in reference_text.split('||') if ans.strip()]
             priority_keywords = parse_priority_keywords(priority_keywords_text)
             
-            grade = grade_text_with_keywords(student_text, ref_answers_list, priority_keywords, text_thresholds)
+            grade = grade_text_with_keywords(student_text, ref_answers_list, priority_keywords)
             text_grade_result = (
                 f"Text Grading Results:\n"
                 f"BERT Similarity: {grade['semantic_similarity']:.4f}\n"
@@ -444,7 +422,7 @@ def combined_grader(
             reference_desc, student_desc = analyze_both_images_for_comparison(student_diagram, reference_diagram)
             
             # Use the student description for grading against reference
-            grade = grade_image_no_keywords(student_desc, [reference_desc], diagram_thresholds)
+            grade = grade_image_no_keywords(student_desc, [reference_desc])
             
             # More aggressive truncation to prevent HTTP errors
             max_length = 200  # Reduced from 500
@@ -526,12 +504,4 @@ with gr.Blocks(title="Combined Text & Diagram Grading Tool") as demo:
 
 if __name__ == "__main__":
     demo.launch()
-    grade_btn.click(
-        combined_grader,
-        inputs=[
-            student_text, student_diagram,
-            reference_text, reference_diagram, priority_keywords_text
-        ],
-        outputs=[text_grade_result, diagram_grade_result]
-    )
 
