@@ -366,7 +366,6 @@ def analyze_both_images_for_comparison(student_image, reference_image):
     )
 
     # Analyze the reference image
-    start_time = time.time()  # Start timing
     try:
         reference_response = chat(
             model='llava',
@@ -383,7 +382,6 @@ def analyze_both_images_for_comparison(student_image, reference_image):
         reference_description = "Error analyzing reference image."
 
     # Analyze the student image
-    start_time = time.time()  # Start timing
     try:
         student_response = chat(
             model='llava',
@@ -413,57 +411,74 @@ def combined_grader(
     
     # --- Text grading (with keywords) ---
     text_grade_result = ""
-    if student_text.strip() and reference_text.strip():
-        ref_answers_list = [ans.strip() for ans in reference_text.split('||') if ans.strip()]
-        priority_keywords = parse_priority_keywords(priority_keywords_text)
-        
-        grade = grade_text_with_keywords(student_text, ref_answers_list, priority_keywords, text_thresholds)
-        text_grade_result = (
-            f"**Text Answer Grading (Random Forest Model - With Keywords)**\n"
-            f"Semantic Similarity (BERT): {grade['semantic_similarity']:.4f}\n"
-            f"Semantic Similarity (SBERT): {grade['sbert_similarity']:.4f}\n"
-            f"Keyword Match Score: {grade['keyword_similarity']:.4f}\n"
-            f"Weighted Keyword Match Percent: {grade['critical_match_percent']:.2f}%\n"
-            f"Predicted Score: {grade['predicted_score']:.2f}/100\n"
-            f"Grade: {grade['grade']}\n"
-            f"Feedback: {grade['feedback']}\n"
-        )
-    elif student_text.strip():
-        text_grade_result = "Student text answer provided, but no reference text for grading."
-    elif reference_text.strip():
-        text_grade_result = "Reference text provided, but no student text answer for grading."
-    else:
-        text_grade_result = "No text answer or reference provided."
+    try:
+        if student_text.strip() and reference_text.strip():
+            ref_answers_list = [ans.strip() for ans in reference_text.split('||') if ans.strip()]
+            priority_keywords = parse_priority_keywords(priority_keywords_text)
+            
+            grade = grade_text_with_keywords(student_text, ref_answers_list, priority_keywords, text_thresholds)
+            text_grade_result = (
+                f"Text Grading Results:\n"
+                f"BERT Similarity: {grade['semantic_similarity']:.4f}\n"
+                f"SBERT Similarity: {grade['sbert_similarity']:.4f}\n"
+                f"Keyword Match Score: {grade['keyword_similarity']:.4f}\n"
+                f"Weighted Keyword Match: {grade['critical_match_percent']:.2f}%\n"
+                f"Score: {grade['predicted_score']:.2f}/100\n"
+                f"Grade: {grade['grade']}\n"
+                f"Feedback: {grade['feedback']}\n"
+            )
+        elif student_text.strip():
+            text_grade_result = "Student text answer provided, but no reference text for grading."
+        elif reference_text.strip():
+            text_grade_result = "Reference text provided, but no student text answer for grading."
+        else:
+            text_grade_result = "No text answer or reference provided."
+    except Exception as e:
+        text_grade_result = f"Error during text grading: {str(e)[:100]}"
 
     # --- Diagram grading (no keywords) using comparison analysis ---
     diagram_grade_result = ""
-    if student_diagram is not None and reference_diagram is not None:
-        # Analyze both images together for comparison
-        reference_desc, matching_sentences = analyze_both_images_for_comparison(student_diagram, reference_diagram)
-        
-        # Use the matching sentences for grading (this represents what the student got right)
-        grade = grade_image_no_keywords(matching_sentences, [reference_desc], diagram_thresholds)
-        
-        # Truncate long descriptions to prevent HTTP errors
-        ref_display = reference_desc[:500] + "..." if len(reference_desc) > 500 else reference_desc
-        match_display = matching_sentences[:500] + "..." if len(matching_sentences) > 500 else matching_sentences
-        
-        diagram_grade_result = (
-            f"**Diagram Grading (Random Forest Model - No Keywords)**\n"
-            f"Semantic Similarity (BERT): {grade['semantic_similarity']:.4f}\n"
-            f"Semantic Similarity (SBERT): {grade['sbert_similarity']:.4f}\n"
-            f"Predicted Score: {grade['predicted_score']:.2f}/100\n"
-            f"Grade: {grade['grade']}\n"
-            f"Feedback: {grade['feedback']}\n\n"
-            f"**Reference Answer (Complete Description):**\n{ref_display}\n\n"
-            f"**What Student Got Correct (Matching Elements):**\n{match_display}"
-        )
-    elif student_diagram is not None:
-        diagram_grade_result = "Student diagram provided, but no reference diagram for grading."
-    elif reference_diagram is not None:
-        diagram_grade_result = "Reference diagram provided, but no student diagram for grading."
-    else:
-        diagram_grade_result = "No diagram or reference provided."
+    try:
+        if student_diagram is not None and reference_diagram is not None:
+            # Analyze both images together for comparison
+            reference_desc, student_desc = analyze_both_images_for_comparison(student_diagram, reference_diagram)
+            
+            # Use the student description for grading against reference
+            grade = grade_image_no_keywords(student_desc, [reference_desc], diagram_thresholds)
+            
+            # More aggressive truncation to prevent HTTP errors
+            max_length = 200  # Reduced from 500
+            ref_display = reference_desc[:max_length] + "..." if len(reference_desc) > max_length else reference_desc
+            student_display = student_desc[:max_length] + "..." if len(student_desc) > max_length else student_desc
+            
+            # Ensure no control characters or problematic content
+            ref_display = ref_display.replace('\n', ' ').replace('\r', ' ').strip()
+            student_display = student_display.replace('\n', ' ').replace('\r', ' ').strip()
+            
+            diagram_grade_result = (
+                f"Diagram Grading Results:\n"
+                f"BERT Similarity: {grade['semantic_similarity']:.4f}\n"
+                f"SBERT Similarity: {grade['sbert_similarity']:.4f}\n"
+                f"Score: {grade['predicted_score']:.2f}/100\n"
+                f"Grade: {grade['grade']}\n"
+                f"Feedback: {grade['feedback']}\n\n"
+                f"Reference: {ref_display}\n\n"
+                f"Student: {student_display}"
+            )
+        elif student_diagram is not None:
+            diagram_grade_result = "Student diagram provided, but no reference diagram for grading."
+        elif reference_diagram is not None:
+            diagram_grade_result = "Reference diagram provided, but no student diagram for grading."
+        else:
+            diagram_grade_result = "No diagram or reference provided."
+    except Exception as e:
+        diagram_grade_result = f"Error during diagram grading: {str(e)[:100]}"
+
+    # Final safety check - limit total response size
+    if len(text_grade_result) > 800:
+        text_grade_result = text_grade_result[:800] + "... (truncated)"
+    if len(diagram_grade_result) > 800:
+        diagram_grade_result = diagram_grade_result[:800] + "... (truncated)"
 
     return text_grade_result, diagram_grade_result
 
@@ -511,36 +526,6 @@ with gr.Blocks(title="Combined Text & Diagram Grading Tool") as demo:
 
 if __name__ == "__main__":
     demo.launch()
-    grade_btn = gr.Button("Grade Both", variant="primary")
-    text_grade_result = gr.Textbox(label="Text Grading Result (With Keywords)", interactive=False, lines=8)
-    diagram_grade_result = gr.Textbox(label="Diagram Grading Result (No Keywords)", interactive=False, lines=8)
-
-    grade_btn.click(
-        combined_grader,
-        inputs=[
-            student_text, student_diagram,
-            reference_text, reference_diagram, priority_keywords_text
-        ],
-        outputs=[text_grade_result, diagram_grade_result]
-    )
-    text_grade_result = gr.Textbox(label="Text Grading Result (With Keywords)", interactive=False, lines=8)
-    diagram_grade_result = gr.Textbox(label="Diagram Grading Result (No Keywords)", interactive=False, lines=8)
-
-    grade_btn.click(
-        combined_grader,
-        inputs=[
-            student_text, student_diagram,
-            reference_text, reference_diagram, priority_keywords_text
-        ],
-        outputs=[text_grade_result, diagram_grade_result]
-    )
-
-if __name__ == "__main__":
-    demo.launch()
-    grade_btn = gr.Button("Grade Both", variant="primary")
-    text_grade_result = gr.Textbox(label="Text Grading Result (With Keywords)", interactive=False, lines=8)
-    diagram_grade_result = gr.Textbox(label="Diagram Grading Result (No Keywords)", interactive=False, lines=8)
-
     grade_btn.click(
         combined_grader,
         inputs=[
