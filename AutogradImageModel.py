@@ -183,33 +183,45 @@ def diagram_grader(student_diagram, reference_diagram):
     """Main diagram grading function"""
     diagram_thresholds = {'A': 80, 'B': 60, 'C': 40, 'D': 20, 'F': 0}
     
-    if student_diagram is not None and reference_diagram is not None:
-        # Analyze both images together for comparison
-        reference_desc, matching_sentences = analyze_both_images_for_comparison(student_diagram, reference_diagram)
-        
-        # Use the matching sentences for grading (this represents what the student got right)
-        grade = grade_image_no_keywords(matching_sentences, [reference_desc], diagram_thresholds)
-        
-        # Truncate long descriptions to prevent HTTP errors
-        ref_display = reference_desc[:500] + "..." if len(reference_desc) > 500 else reference_desc
-        match_display = matching_sentences[:500] + "..." if len(matching_sentences) > 500 else matching_sentences
-        
-        diagram_grade_result = (
-            f"**Diagram Grading (Random Forest Model - No Keywords)**\n"
-            f"Semantic Similarity (BERT): {grade['semantic_similarity']:.4f}\n"
-            f"Semantic Similarity (SBERT): {grade['sbert_similarity']:.4f}\n"
-            f"Predicted Score: {grade['predicted_score']:.2f}/100\n"
-            f"Grade: {grade['grade']}\n"
-            f"Feedback: {grade['feedback']}\n\n"
-            f"**Reference Answer (Complete Description):**\n{ref_display}\n\n"
-            f"**What Student Got Correct (Matching Elements):**\n{match_display}"
-        )
-    elif student_diagram is not None:
-        diagram_grade_result = "Student diagram provided, but no reference diagram for grading."
-    elif reference_diagram is not None:
-        diagram_grade_result = "Reference diagram provided, but no student diagram for grading."
-    else:
-        diagram_grade_result = "No diagram or reference provided."
+    try:
+        if student_diagram is not None and reference_diagram is not None:
+            # Analyze both images together for comparison
+            reference_desc, matching_sentences = analyze_both_images_for_comparison(student_diagram, reference_diagram)
+            
+            # Use the matching sentences for grading (this represents what the student got right)
+            grade = grade_image_no_keywords(matching_sentences, [reference_desc], diagram_thresholds)
+            
+            # More aggressive truncation to prevent HTTP errors
+            max_length = 200  # Reduced from 500
+            ref_display = reference_desc[:max_length] + "..." if len(reference_desc) > max_length else reference_desc
+            match_display = matching_sentences[:max_length] + "..." if len(matching_sentences) > max_length else matching_sentences
+            
+            # Ensure no control characters or problematic content
+            ref_display = ref_display.replace('\n', ' ').replace('\r', ' ').strip()
+            match_display = match_display.replace('\n', ' ').replace('\r', ' ').strip()
+            
+            diagram_grade_result = (
+                f"Diagram Grading Results:\n"
+                f"BERT Similarity: {grade['semantic_similarity']:.4f}\n"
+                f"SBERT Similarity: {grade['sbert_similarity']:.4f}\n"
+                f"Score: {grade['predicted_score']:.2f}/100\n"
+                f"Grade: {grade['grade']}\n"
+                f"Feedback: {grade['feedback']}\n\n"
+                f"Reference: {ref_display}\n\n"
+                f"Student Match: {match_display}"
+            )
+        elif student_diagram is not None:
+            diagram_grade_result = "Student diagram provided, but no reference diagram for grading."
+        elif reference_diagram is not None:
+            diagram_grade_result = "Reference diagram provided, but no student diagram for grading."
+        else:
+            diagram_grade_result = "No diagram or reference provided."
+    except Exception as e:
+        diagram_grade_result = f"Error during grading: {str(e)[:100]}"
+
+    # Final safety check - limit total response size
+    if len(diagram_grade_result) > 1000:
+        diagram_grade_result = diagram_grade_result[:1000] + "... (truncated)"
 
     return diagram_grade_result
 
